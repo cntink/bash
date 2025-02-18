@@ -31,8 +31,8 @@ fi
 read -p "请输入主端口 (默认 4488, 直接回车使用默认值): " main_port
 [[ -z "$main_port" ]] && main_port="4488"
 
-read -p "请输入密码 (默认 129b8bd2-ce97-4c7a-8844-350a56d1fa9b, 直接回车使用默认值): " password
-[[ -z "$password" ]] && password="129b8bd2-ce97-4c7a-8844-350a56d1fa9b"
+read -p "请输入密码 (默认 123b8bd2-cec7-4c7a-1234-350a56d1fa8b, 直接回车使用默认值): " password
+[[ -z "$password" ]] && password="123b8bd2-cec7-4c7a-1234-350a56d1fa8b"
 
 read -p "请输入跳跃端口范围 (默认 40000-62000, 直接回车使用默认值): " port_range
 [[ -z "$port_range" ]] && port_range="40000-62000"
