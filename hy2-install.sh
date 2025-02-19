@@ -27,22 +27,13 @@ log() {
 }
 
 # 检查是否以 root 用户运行
-if [[ $EUID -ne 0 ]]; then
-  log "错误：请以 root 用户运行此脚本！"
-  exit 1
-fi
+[[ $EUID -ne 0 ]] && echo -e "${RED}错误：请以 root 用户运行此脚本！${NC}" && exit 1
 
 # 检查依赖项
 check_dependencies() {
   local dependencies=("curl" "wget" "jq" "iptables" "ip6tables" "netfilter-persistent" "dnsutils" "uuid-runtime")
   for dep in "${dependencies[@]}"; do
-    if ! command -v "$dep" &>/dev/null; then
-      log "警告：未检测到 $dep，正在安装..."
-      if ! apt update && apt install -y "$dep"; then
-        log "错误：$dep 安装失败，请手动安装！"
-        exit 1
-      fi
-    fi
+    dpkg -s "$dep" &>/dev/null || sudo apt install -y "$dep" &>/dev/null
   done
 }
 check_dependencies
@@ -92,7 +83,7 @@ fi
 log "域名解析成功，开始安装 Hysteria2..."
 
 # 自动生成邮箱地址（如果用户没有输入）
-read -p "请输入电子邮件地址 (若不输入则生成默认邮箱): " email
+read -p "域名证书申请邮箱 (默认自动生成): " email
 if [[ -z "$email" ]]; then
   email="admin@$domain"
   log "未提供邮箱，已使用默认邮箱：$email"
@@ -101,7 +92,7 @@ fi
 # 处理证书申请
 # 确保 acme.sh 已经安装并设置路径
 if [ ! -f "$HOME/.acme.sh/acme.sh" ]; then
-  log "错误：未检测到 acme.sh 脚本，正在安装..."
+  log "未检测到 acme.sh 脚本，正在安装..."
   curl https://get.acme.sh | sh
 fi
 ACME_SH="$HOME/.acme.sh/acme.sh"  # 设置正确的 acme.sh 路径
@@ -109,10 +100,9 @@ ACME_SH="$HOME/.acme.sh/acme.sh"  # 设置正确的 acme.sh 路径
 # 检查是否已安装 Hysteria2
 check_existing_hysteria() {
   if [[ -f /usr/local/bin/hysteria ]]; then
-    log "检测到已安装的 Hysteria2。"
-    read -p "是否卸载旧版本并继续安装新版本？(y/n): " confirm
-    if [[ "$confirm" == "y" || "$confirm" == "Y" ]]; then
-      log "卸载旧版本 Hysteria2。"
+    read -p "卸载旧版本 Hysteria2？(默认卸载)(Y/n): " confirm
+    confirm=${confirm:-Y}
+    if [[ "$confirm" == "Y" || "$confirm" == "y" ]]; then
       systemctl stop hysteria || true
       systemctl disable hysteria || true
       rm -f /usr/local/bin/hysteria
@@ -128,7 +118,7 @@ check_existing_hysteria() {
 check_existing_hysteria
 
 # 获取主端口（如果用户未输入，则使用默认值 443）
-read -p "请输入主端口 (默认 443，直接回车使用默认值): " raw_main_port
+read -p "主端口 (默认 443): " raw_main_port
 main_port=${raw_main_port:-443}
 until [[ "$main_port" =~ ^[0-9]+$ && "$main_port" -ge 1 && "$main_port" -le 65535 ]]; do
   log "错误：无效的主端口号，请输入 1-65535 之间的数字！"
@@ -137,7 +127,7 @@ until [[ "$main_port" =~ ^[0-9]+$ && "$main_port" -ge 1 && "$main_port" -le 6553
 done
 
 # 获取端口范围（如果用户未输入，则使用默认值 40000-62000）
-read -p "请输入端口范围 (默认 40000-62000，直接回车使用默认值): " raw_port_range
+read -p "端口跳跃范围 (默认 40000-62000): " raw_port_range
 format_port_range() {
   local input="$1"
     
@@ -165,7 +155,6 @@ if [[ -z "$formatted_port_range" ]]; then
   log "错误：无效的端口范围格式，请使用 '起始端口-结束端口' 或 '起始端口:结束端口' 格式！"
   exit 1
 fi
-log "已格式化端口范围为: $formatted_port_range"
 
 # 获取网络接口名称
 network_interface=$(ip -o -4 route show to default | awk '{print $5}')
@@ -184,91 +173,68 @@ check_ipv6_support() {
 }
 
 # 配置防火墙规则
-log "正在配置防火墙规则 ..."
+manage_firewall_rules() {
+  local port_range="$1"
+  local interface="$2"
 
-# 添加或更新 NAT 规则
-nat_rule="PREROUTING -i $network_interface -p udp --dport $formatted_port_range -j REDIRECT --to-ports $main_port"
-if ! iptables -t nat -C PREROUTING -i $network_interface -p udp --dport $formatted_port_range -j REDIRECT --to-ports $main_port 2>/dev/null; then
-  iptables -t nat -A PREROUTING -i $network_interface -p udp --dport $formatted_port_range -j REDIRECT --to-ports $main_port
-  log "已添加 NAT 规则: $nat_rule"
-else
-  log "NAT 规则已存在，无需重复添加: $nat_rule"
-fi
+  # 删除所有可能的端口跳跃规则
+  for rule in $(sudo iptables -t nat -L PREROUTING -n --line-numbers | grep "REDIRECT" | awk '{print $1}'); do
+    sudo iptables -t nat -D PREROUTING $rule
+  done
 
-# 添加或更新 INPUT 规则
-input_rule_udp_main="INPUT -p udp --dport $main_port -j ACCEPT"
-if ! iptables -C INPUT -p udp --dport $main_port -j ACCEPT 2>/dev/null; then
-  iptables -A INPUT -p udp --dport $main_port -j ACCEPT
-  log "已添加 INPUT 规则: $input_rule_udp_main"
-else
-  log "INPUT 规则已存在，无需重复添加: $input_rule_udp_main"
-fi
+  for rule in $(sudo iptables -L INPUT -n --line-numbers | grep "multiport" | awk '{print $1}'); do
+    sudo iptables -D INPUT $rule
+  done
 
-input_rule_udp_range="INPUT -p udp -m multiport --dports $formatted_port_range -j ACCEPT"
-if ! iptables -C INPUT -p udp -m multiport --dports $formatted_port_range -j ACCEPT 2>/dev/null; then
-  iptables -A INPUT -p udp -m multiport --dports $formatted_port_range -j ACCEPT
-  log "已添加 INPUT 规则: $input_rule_udp_range"
-else
-  log "INPUT 规则已存在，无需重复添加: $input_rule_udp_range"
-fi
-
-# 配置 IPv6 防火墙规则
-if check_ipv6_support; then
   if command -v ip6tables &>/dev/null; then
-    nat_rule_ipv6="PREROUTING -i $network_interface -p udp --dport $formatted_port_range -j REDIRECT --to-ports $main_port"
-    if ! ip6tables -t nat -C PREROUTING -i $network_interface -p udp --dport $formatted_port_range -j REDIRECT --to-ports $main_port 2>/dev/null; then
-      ip6tables -t nat -A PREROUTING -i $network_interface -p udp --dport $formatted_port_range -j REDIRECT --to-ports $main_port
-      log "已添加 IPv6 NAT 规则: $nat_rule_ipv6"
-    else
-      log "IPv6 NAT 规则已存在，无需重复添加: $nat_rule_ipv6"
-    fi
+    for rule in $(sudo ip6tables -t nat -L PREROUTING -n --line-numbers | grep "REDIRECT" | awk '{print $1}'); do
+      sudo ip6tables -t nat -D PREROUTING $rule
+    done
 
-    input_rule_ipv6_udp_main="INPUT -p udp --dport $main_port -j ACCEPT"
-    if ! ip6tables -C INPUT -p udp --dport $main_port -j ACCEPT 2>/dev/null; then
-      ip6tables -A INPUT -p udp --dport $main_port -j ACCEPT
-      log "已添加 IPv6 INPUT 规则: $input_rule_ipv6_udp_main"
-    else
-      log "IPv6 INPUT 规则已存在，无需重复添加: $input_rule_ipv6_udp_main"
-    fi
-
-    input_rule_ipv6_udp_range="INPUT -p udp -m multiport --dports $formatted_port_range -j ACCEPT"
-    if ! ip6tables -C INPUT -p udp -m multiport --dports $formatted_port_range -j ACCEPT 2>/dev/null; then
-      ip6tables -A INPUT -p udp -m multiport --dports $formatted_port_range -j ACCEPT
-      log "已添加 IPv6 INPUT 规则: $input_rule_ipv6_udp_range"
-    else
-      log "IPv6 INPUT 规则已存在，无需重复添加: $input_rule_ipv6_udp_range"
-    fi
-  else
-    log "警告：未检测到 ip6tables，无法配置 IPv6 防火墙规则。"
+    for rule in $(sudo ip6tables -L INPUT -n --line-numbers | grep "multiport" | awk '{print $1}'); do
+      sudo ip6tables -D INPUT $rule
+    done
   fi
-else
-  log "系统不支持 IPv6，将跳过 IPv6 防火墙规则配置。"
-fi
 
-# 保存规则
-mkdir -p /etc/iptables
-iptables-save > /etc/iptables/rules.v4
-netfilter-persistent save
+  # 添加新的规则
+  sudo iptables -t nat -A PREROUTING -i "$interface" -p udp --dport "$port_range" -j REDIRECT --to-ports $main_port
+  sudo iptables -A INPUT -p udp -m multiport --dports "$port_range" -j ACCEPT
+
+  if command -v ip6tables &>/dev/null; then
+    sudo ip6tables -t nat -A PREROUTING -i "$interface" -p udp --dport "$port_range" -j REDIRECT --to-ports $main_port
+    sudo ip6tables -A INPUT -p udp -m multiport --dports "$port_range" -j ACCEPT
+  fi
+
+  # 保存规则
+  mkdir -p /etc/iptables
+  sudo iptables-save > /etc/iptables/rules.v4
+  if command -v ip6tables-save &>/dev/null; then
+    sudo ip6tables-save > /etc/iptables/rules.v6
+  fi
+  sudo netfilter-persistent save
+}
+log "配置防火墙规则 ..."
+manage_firewall_rules "$formatted_port_range" "$network_interface"
 
 # 安装证书
 log "检查现有证书..."
 existing_cert="/etc/ssl/certs/$domain/fullchain.pem"
 existing_key="/etc/ssl/certs/$domain/privkey.pem"
 
+# 检查证书
 if [[ -f "$existing_cert" && -f "$existing_key" ]]; then
-  # 检查证书过期时间
   expiry_date=$(openssl x509 -in "$existing_cert" -noout -enddate | cut -d'=' -f2)
   current_date=$(date -u +%s)
   expiry_timestamp=$(date -ud "$expiry_date" +%s)
   days_until_expiry=$(( (expiry_timestamp - current_date) / 86400 ))
 
   if [[ $days_until_expiry -gt 30 ]]; then
-    log "检测到有效的证书，过期时间为 $expiry_date ($days_until_expiry 天后过期)"
-    read -p "是否重新获取证书？(y/n): " reissue_cert
-    if [[ "$reissue_cert" != "y" && "$reissue_cert" != "Y" ]]; then
-      log "选择沿用现有证书。"
-    else
+    read -p "证书有效，$days_until_expiry 天后过期。是否重新获取？(默认否)(y/N): " reissue_cert
+    reissue_cert=${reissue_cert:-N}
+    if [[ "$reissue_cert" == "y" || "$reissue_cert" == "Y" ]]; then
       skip_certificate_issue=false
+    else
+      skip_certificate_issue=true
     fi
   else
     log "检测到的证书即将过期或已过期，将重新获取证书。"
@@ -280,34 +246,32 @@ else
 fi
 
 if [[ "$skip_certificate_issue" == false ]]; then
-  log "请选择证书申请方式:"
-  echo -e "${BLUE}请选择证书申请方式:${NC}"
-  echo "1) Standalone 模式（无 Web 服务器运行，自动监听 80 端口）"
-  echo "2) 使用 Cloudflare API 申请证书（推荐）"
-  echo "3) 使用 Aliyun API 申请证书"
-  read -p "请输入选项 (1/2/3): " cert_option
+# 选择证书申请方式
+  echo -e "${BLUE}选择证书申请方式:${NC}"
+  echo "1) Standalone 2) Cloudflare 3) Aliyun"
+  read -p "选项 (1/2/3): " cert_option
   case $cert_option in
     1)
       # Standalone 模式的证书申请
       # 检查 80 端口是否被占用
-      if lsof -i :80 >/dev/null 2>&1; then
+      if sudo lsof -i :80 >/dev/null 2>&1; then
         log "警告：80 端口已被占用，尝试停止相关服务..."
         if systemctl list-units --type=service | grep -q nginx; then
-          systemctl stop nginx || true
+          sudo systemctl stop nginx || true
         fi
         if systemctl list-units --type=service | grep -q apache2; then
-          systemctl stop apache2 || true
+          sudo systemctl stop apache2 || true
         fi
       fi
       # 允许 80 端口流量
-      if ! iptables -C INPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null; then
-        iptables -A INPUT -p tcp --dport 80 -j ACCEPT
-        iptables-save > /etc/iptables/rules.v4
-        netfilter-persistent save
+      if ! sudo iptables -C INPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null; then
+        sudo iptables -A INPUT -p tcp --dport 80 -j ACCEPT
+        sudo iptables-save > /etc/iptables/rules.v4
+        sudo netfilter-persistent save
       fi
       # 创建 webroot 目录
-      mkdir -p /var/www/html/.well-known/acme-challenge
-      chmod -R 755 /var/www/html
+      sudo mkdir -p /var/www/html/.well-known/acme-challenge
+      sudo chmod -R 755 /var/www/html
       # 增加重试机制
       max_retries=3
       retry_interval=20
@@ -326,6 +290,12 @@ if [[ "$skip_certificate_issue" == false ]]; then
         log "错误：域名验证失败，请检查日志！"
         exit 1
       fi
+      
+      # 关闭80端口的流量
+      sudo iptables -D INPUT -p tcp --dport 80 -j ACCEPT
+      sudo iptables-save > /etc/iptables/rules.v4
+      sudo netfilter-persistent save
+      log "已关闭 80 端口的流量。"
       ;;
     2)
       read -p "请输入 Cloudflare API Key: " cloudflare_api_key
@@ -356,7 +326,7 @@ if [[ "$skip_certificate_issue" == false ]]; then
       unset Ali_Secret
       ;;
     *)
-      log "无效选项，退出安装"
+      log "${RED}无效选项，退出安装"
       exit 1
       ;;
   esac
@@ -373,30 +343,31 @@ if [[ "$skip_certificate_issue" == false ]]; then
 
   # 验证证书文件是否存在
   if [[ ! -f "/etc/ssl/certs/$domain/fullchain.pem" || ! -f "/etc/ssl/certs/$domain/privkey.pem" ]]; then
-    log "错误：证书安装失败，请检查 acme.sh 的配置！"
+    log "${RED}错误：证书安装失败，请检查 acme.sh 的配置！"
     exit 1
   fi
 fi
 
 # 检查 SSL 证书路径或相关文件是否有问题
 check_ssl_certificates() {
-  if ! command -v openssl &>/dev/null; then
-    log "错误：未检测到 OpenSSL，正在安装..."
-    if ! apt update && apt install -y openssl; then
-      log "错误：OpenSSL 安装失败，请手动安装！"
+  local openssl_check=$(command -v openssl)
+  if [[ -z "$openssl_check" ]]; then
+    echo -e "${RED}错误：未检测到 OpenSSL，正在安装...${NC}"
+    if ! apt update && apt install -y openssl &>/dev/null; then
+      echo -e "${RED}错误：OpenSSL 安装失败，请手动安装！${NC}"
       exit 1
     fi
   fi
 
-  # 检查 CA 证书包
-  if ! openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/$domain/fullchain.pem &>/dev/null; then
-    log "警告：CA 证书包可能有问题，正在更新 CA 证书包..."
-    if ! apt update && apt install -y --reinstall ca-certificates; then
-      log "错误：更新 CA 证书包失败，请手动检查！"
+  # 检查CA证书包是否支持HTTPS和TLS连接
+  local cert_check=$(echo | openssl s_client -connect github.com:443 -CAfile /etc/ssl/certs/ca-certificates.crt 2>/dev/null | grep -q 'Verify return code: 0 (ok)' && echo "OK" || echo "FAIL")
+  
+  if [[ "$cert_check" != "OK" ]]; then
+    echo -e "${RED}警告：CA 证书包可能有问题，无法验证TLS连接，正在更新...${NC}"
+    if ! apt update && apt install -y --reinstall ca-certificates &>/dev/null; then
+      echo -e "${RED}错误：更新 CA 证书包失败，请手动检查！${NC}"
       exit 1
     fi
-  else
-    log "CA 证书包正常。"
   fi
 }
 
@@ -411,7 +382,7 @@ download_hysteria() {
     log "正在尝试下载 Hysteria2，第 $((retry_count + 1)) 次尝试..."
     latest_version=$(curl -sL https://api.github.com/repos/apernet/hysteria/releases/latest | jq -r '.tag_name')
     if [[ -z "$latest_version" ]]; then
-      log "警告：无法获取 Hysteria2 最新版本，重试中..."
+      log "${RED}警告：无法获取 Hysteria2 最新版本，重试中..."
       retry_count=$((retry_count + 1))
       sleep $retry_interval
       continue
@@ -423,7 +394,7 @@ download_hysteria() {
       log "Hysteria2 下载成功！"
       break
     else
-      log "警告：Hysteria2 下载失败，重试中..."
+      log "${RED}警告：Hysteria2 下载失败，重试中..."
       retry_count=$((retry_count + 1))
       sleep $retry_interval
     fi
@@ -439,20 +410,19 @@ chmod +x /usr/local/bin/hysteria
 
 # 检查文件是否成功安装
 if [[ ! -f /usr/local/bin/hysteria ]]; then
-  log "错误：Hysteria2 安装失败，请检查网络连接或权限！"
+  log "${RED}错误：Hysteria2 安装失败，请检查网络连接或权限！"
   exit 1
 fi
 
 # 创建 Hysteria2 配置文件
 mkdir -p /etc/hysteria
-read -p "请输入伪装目标 URL (默认 https://wx.qq.com, 直接回车使用默认值): " masquerade_url
-read -p "请输入密码 (留空则自动生成 UUID 作为密码): " password
+read -p "伪装 URL (默认 https://wx.qq.com): " masquerade_url
+read -p "密码 (默认生成 UUID): " password
 if [[ -z "$password" ]]; then
   password=$(uuidgen)
-  log "未提供密码，已使用自动生成的 UUID 作为密码: $password"
+  echo -e "${RED}密码: $password${NC}"
 fi
 [[ -z "$masquerade_url" ]] && masquerade_url="https://wx.qq.com"
-log "使用伪装目标 URL: $masquerade_url"
 cat <<EOF > /etc/hysteria/config.yaml
 listen: :$main_port
 tls:
@@ -500,8 +470,49 @@ systemctl start hysteria
 
 # 检查 Hysteria2 服务是否启动成功
 if systemctl is-active --quiet hysteria; then
-  log "Hysteria2 已成功安装并启动！"
+  echo -e "${GREEN}Hysteria2 已成功安装并启动！${NC}"
+  
+  # 设置端口跳跃间隔时间
+  read -p "端口跳跃间隔 (秒, 默认 30): " hop_interval
+  hop_interval=${hop_interval:-30}
+  
+# 获取当前计算机名
+hostname=$(hostname | tr -d '[:space:]' | tr -cd '[:alnum:]-_')
+
+generate_subscription_and_clash() {
+  # 解析端口范围（确保格式正确）
+  local start_port=$(echo "$formatted_port_range" | cut -d ':' -f 1)
+  local end_port=$(echo "$formatted_port_range" | cut -d ':' -f 2)
+  local ports_range="$start_port-$end_port"
+  
+  # 生成订阅链接，符合 Hysteria2 官方文档并添加名称信息
+  local subscription_link="hysteria2://$password@$domain:$main_port/?insecure=1&hopPorts=$formatted_port_range#[DIY_Hy2]$hostname"
+  local clash_config=$(cat <<EOF
+  - name: "[DIY_Hy2]$hostname"
+    type: hysteria2
+    server: $domain
+    ports: $ports_range
+    password: $password
+    sni: $domain
+    skip-cert-verify: false
+    transport:
+      type: udp
+      udp:
+        hopInterval: ${hop_interval}s
+EOF
+)
+
+  echo -e "${GREEN}订阅链接:${NC} $subscription_link"
+  echo -e "${GREEN}注意:${NC} 请在您的客户端配置中手动设置端口跳跃间隔时间为 $hop_interval 秒。"
+  echo -e "${GREEN}生成订阅链接的二维码:${NC}"
+  echo -e "$subscription_link" | qrencode -t ansiutf8
+  echo -e "${GREEN}Clash节点配置模板:${NC}"
+  echo "$clash_config"
+}
+  
+  generate_subscription_and_clash
+
 else
-  log "错误：Hysteria2 启动失败，请检查日志！"
+  echo -e "${RED}错误：Hysteria2 启动失败，请检查日志！${NC}"
   exit 1
 fi
