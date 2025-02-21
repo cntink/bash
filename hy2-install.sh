@@ -107,7 +107,7 @@ check_existing_hysteria() {
       systemctl disable hysteria || true
       rm -f /usr/local/bin/hysteria
       rm -rf /etc/hysteria
-      rm -f /etc/systemd/system/hysteria.service
+      rm -f /etc/systemd/system/hysteria2.service
       log "已卸载旧版本 Hysteria2。"
     else
       log "取消安装。"
