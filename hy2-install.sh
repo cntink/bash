@@ -16,6 +16,9 @@ CERT_DIR="/etc/ssl/certs"
 ACME_SH="$HOME/.acme.sh/acme.sh"
 SCRIPT_LANG=""
 APT_UPDATED=false
+CONFIG_FILE="$CONFIG_DIR/config.yaml"
+SERVICE_NAME="hysteria"
+SYSTEMD_SERVICE="/etc/systemd/system/$SERVICE_NAME.service"
 
 # 初始化日志文件并检查权限
 init_logging() {
@@ -39,10 +42,18 @@ log() {
 
 # 语言选择函数
 select_language() {
-  echo "请选择语言/Select language:"
-  echo "1) 中文/Chinese"
-  echo "2) 英文/English"
-  read -p "输入选项/Enter option (1/2): " lang_choice
+  clear  # 清屏
+  if [ "$SCRIPT_LANG" == "zh" ]; then
+    echo -e "${RED}请选择语言:${NC}"
+    echo -e "${GREEN}1) 中文${NC}"
+    echo -e "${GREEN}2) 英文${NC}"
+    read -p "输入选项 (1/2): " lang_choice
+  else
+    echo -e "${RED}Select language:${NC}"
+    echo -e "${GREEN}1) Chinese${NC}"
+    echo -e "${GREEN}2) English${NC}"
+    read -p "Enter option (1/2): " lang_choice
+  fi
   case "$lang_choice" in
     1) SCRIPT_LANG="zh" ;;
     2) SCRIPT_LANG="en" ;;
@@ -61,13 +72,14 @@ MESSAGES[zh_input_range]="端口跳跃范围 (默认 40000-62000): "
 MESSAGES[zh_input_url]="伪装 URL (默认 https://wx.qq.com): "
 MESSAGES[zh_input_pwd]="密码 (默认生成 UUID): "
 MESSAGES[zh_input_hop]="端口跳跃间隔 (秒, 默认 30): "
-MESSAGES[zh_select_cert]="选择证书申请方式: 1) Standalone 2) Cloudflare 3) Aliyun\n选项 (1/2/3): "
-MESSAGES[zh_confirm_uninstall]="检测到已有 Hysteria2，是否卸载旧版本？(默认 Y)(Y/n): "
-MESSAGES[zh_confirm_backup]="是否备份旧版本配置？(默认 N)(y/N): "
-MESSAGES[zh_confirm_reissue]="证书有效，剩余 %d 天，是否重新获取？(y/N): "
+MESSAGES[zh_select_cert]="选择证书申请方式:\n${GREEN}1) Standalone${NC}\n${GREEN}2) Cloudflare${NC}\n${GREEN}3) Aliyun${NC}\n选项 (1/2/3): "
+MESSAGES[zh_confirm_uninstall]="检测到已有 Hysteria2，是否卸载旧版本？(默认 Y)\n${GREEN}Y) 是${NC}\n${GREEN}n) 否${NC}\n输入选项 (Y/n): "
+MESSAGES[zh_confirm_backup]="是否备份旧版本配置？(默认 N)\n${GREEN}y) 是${NC}\n${GREEN}N) 否${NC}\n输入选项 (y/N): "
+MESSAGES[zh_confirm_reissue]="现有证书剩余 %d 天，是否重新获取？(默认 N)\n${GREEN}y) 是${NC}\n${GREEN}N) 否${NC}\n输入选项 (y/N): "
 MESSAGES[zh_err_root]="错误：请以 root 用户运行此脚本！"
 MESSAGES[zh_err_domain]="错误：无效的域名格式或解析不正确！"
 MESSAGES[zh_err_ssl]="错误：OpenSSL 或 CA 证书安装失败！"
+MESSAGES[zh_err_cert]="错误：无法解析证书有效期，请检查文件 %s"
 MESSAGES[zh_check_deps]="检查并安装依赖项..."
 MESSAGES[zh_update_index]="更新包索引..."
 MESSAGES[zh_install_dep]="安装依赖 %s..."
@@ -89,7 +101,17 @@ MESSAGES[zh_download_hy2]="下载 Hysteria2 (%d/%d)..."
 MESSAGES[zh_create_service]="创建服务..."
 MESSAGES[zh_check_health]="检查服务健康状态..."
 MESSAGES[zh_service_ok]="服务正常运行"
-MESSAGES[zh_install_done]="安装完成！"
+MESSAGES[zh_install_done]="安装完成！配置文件位于: %s"
+MESSAGES[zh_service_exists]="检测到 Hysteria2 服务已存在，请选择操作:\n${GREEN}1) 管理服务${NC}\n${GREEN}2) 安装新 Hysteria2${NC}"
+MESSAGES[zh_manage_menu]="请选择管理操作:\n${GREEN}1) 查看服务状态${NC}\n${GREEN}2) 查看最近 30 条日志${NC}\n${GREEN}3) 重启服务${NC}\n${GREEN}4) 停止服务${NC}\n${GREEN}5) 显示配置信息${NC}\n${GREEN}6) 返回上级菜单${NC}\n${GREEN}7) 退出脚本${NC}"
+MESSAGES[zh_service_status]="Hysteria2 服务状态:"
+MESSAGES[zh_service_logs]="Hysteria2 服务最近 30 条日志:"
+MESSAGES[zh_service_restart]="正在重启 Hysteria2 服务..."
+MESSAGES[zh_service_stop]="正在停止 Hysteria2 服务..."
+MESSAGES[zh_service_config]="Hysteria2 服务配置信息:"
+MESSAGES[zh_continue_prompt]="按回车继续管理，或输入 q 退出: "
+MESSAGES[zh_input_option]="输入选项 (1/2): "
+MESSAGES[zh_input_manage_option]="输入选项 (1-7): "
 # 英文提示
 MESSAGES[en_input_domain]="Please enter the domain: "
 MESSAGES[en_input_email]="Email for certificate application (default auto-generated): "
@@ -98,13 +120,14 @@ MESSAGES[en_input_range]="Port hopping range (default 40000-62000): "
 MESSAGES[en_input_url]="Masquerade URL (default https://wx.qq.com): "
 MESSAGES[en_input_pwd]="Password (default UUID generated): "
 MESSAGES[en_input_hop]="Port hopping interval (seconds, default 30): "
-MESSAGES[en_select_cert]="Select certificate issuance method: 1) Standalone 2) Cloudflare 3) Aliyun\nOption (1/2/3): "
-MESSAGES[en_confirm_uninstall]="Existing Hysteria2 detected, uninstall old version? (default Y)(Y/n): "
-MESSAGES[en_confirm_backup]="Backup old version config? (default N)(y/N): "
-MESSAGES[en_confirm_reissue]="Certificate valid, %d days remaining, reissue? (y/N): "
+MESSAGES[en_select_cert]="Select certificate issuance method:\n${GREEN}1) Standalone${NC}\n${GREEN}2) Cloudflare${NC}\n${GREEN}3) Aliyun${NC}\nOption (1/2/3): "
+MESSAGES[en_confirm_uninstall]="Existing Hysteria2 detected, uninstall old version? (default Y)\n${GREEN}Y) Yes${NC}\n${GREEN}n) No${NC}\nEnter option (Y/n): "
+MESSAGES[en_confirm_backup]="Backup old version config? (default N)\n${GREEN}y) Yes${NC}\n${GREEN}N) No${NC}\nEnter option (y/N): "
+MESSAGES[en_confirm_reissue]="Current certificate has %d days remaining, reissue? (default N)\n${GREEN}y) Yes${NC}\n${GREEN}N) No${NC}\nEnter option (y/N): "
 MESSAGES[en_err_root]="Error: Please run this script as root!"
 MESSAGES[en_err_domain]="Error: Invalid domain format or resolution!"
 MESSAGES[en_err_ssl]="Error: Failed to install OpenSSL or CA certificates!"
+MESSAGES[en_err_cert]="Error: Unable to parse certificate validity, check file %s"
 MESSAGES[en_check_deps]="Checking and installing dependencies..."
 MESSAGES[en_update_index]="Updating package index..."
 MESSAGES[en_install_dep]="Installing dependency %s..."
@@ -126,7 +149,17 @@ MESSAGES[en_download_hy2]="Downloading Hysteria2 (%d/%d)..."
 MESSAGES[en_create_service]="Creating service..."
 MESSAGES[en_check_health]="Checking service health..."
 MESSAGES[en_service_ok]="Service running normally"
-MESSAGES[en_install_done]="Installation completed!"
+MESSAGES[en_install_done]="Installation completed! Config file located at: %s"
+MESSAGES[en_service_exists]="Hysteria2 service detected, choose action:\n${GREEN}1) Manage service${NC}\n${GREEN}2) Install new Hysteria2${NC}"
+MESSAGES[en_manage_menu]="Select management action:\n${GREEN}1) View service status${NC}\n${GREEN}2) View last 30 log entries${NC}\n${GREEN}3) Restart service${NC}\n${GREEN}4) Stop service${NC}\n${GREEN}5) Show config info${NC}\n${GREEN}6) Return to previous menu${NC}\n${GREEN}7) Exit script${NC}"
+MESSAGES[en_service_status]="Hysteria2 service status:"
+MESSAGES[en_service_logs]="Last 30 log entries for Hysteria2 service:"
+MESSAGES[en_service_restart]="Restarting Hysteria2 service..."
+MESSAGES[en_service_stop]="Stopping Hysteria2 service..."
+MESSAGES[en_service_config]="Hysteria2 service configuration info:"
+MESSAGES[en_continue_prompt]="Press Enter to continue managing, or enter 'q' to quit: "
+MESSAGES[en_input_option]="Enter option (1/2): "
+MESSAGES[en_input_manage_option]="Enter option (1-7): "
 
 # 获取语言特定消息
 get_msg() {
@@ -222,27 +255,25 @@ install_acme_sh() {
 
 # 检查并备份已有 Hysteria2 配置
 check_existing_hysteria() {
-  if [[ -f /usr/local/bin/hysteria ]]; then
-    read -p "$(get_msg confirm_uninstall)" confirm_uninstall
-    confirm_uninstall=${confirm_uninstall:-Y}
-    if [[ "$confirm_uninstall" =~ ^[Yy]$ ]]; then
-      read -p "$(get_msg confirm_backup)" confirm_backup
-      confirm_backup=${confirm_backup:-N}
-      if [[ "$confirm_backup" =~ ^[Yy]$ ]]; then
-        log "$(get_msg backup_uninstall)"
-        mkdir -p "$BACKUP_DIR"
-        local backup_file="$BACKUP_DIR/hysteria_backup_$(date '+%Y%m%d%H%M%S').tar.gz"
-        tar -czf "$backup_file" /usr/local/bin/hysteria "$CONFIG_DIR" /etc/systemd/system/hysteria.service 2>/dev/null
-        log "$(get_msg backup_done "$backup_file")" "$GREEN"
-      fi
-      systemctl stop hysteria &>/dev/null || true
-      systemctl disable hysteria &>/dev/null || true
-      rm -f /usr/local/bin/hysteria /etc/systemd/system/hysteria.service
-      rm -rf "$CONFIG_DIR"
-    else
-      log "Canceled installation"
-      exit 0
+  read -p "$(get_msg confirm_uninstall)" confirm_uninstall
+  confirm_uninstall=${confirm_uninstall:-Y}
+  if [[ "$confirm_uninstall" =~ ^[Yy]$ ]]; then
+    read -p "$(get_msg confirm_backup)" confirm_backup
+    confirm_backup=${confirm_backup:-N}
+    if [[ "$confirm_backup" =~ ^[Yy]$ ]]; then
+      log "$(get_msg backup_uninstall)"
+      mkdir -p "$BACKUP_DIR"
+      local backup_file="$BACKUP_DIR/hysteria_backup_$(date '+%Y%m%d%H%M%S').tar.gz"
+      tar -czf "$backup_file" /usr/local/bin/hysteria "$CONFIG_DIR" "$SYSTEMD_SERVICE" 2>/dev/null
+      log "$(get_msg backup_done "$backup_file")" "$GREEN"
     fi
+    systemctl stop "$SERVICE_NAME" &>/dev/null || true
+    systemctl disable "$SERVICE_NAME" &>/dev/null || true
+    rm -f /usr/local/bin/hysteria "$SYSTEMD_SERVICE"
+    rm -rf "$CONFIG_DIR"
+  else
+    log "Canceled installation"
+    exit 0
   fi
 }
 
@@ -324,19 +355,33 @@ issue_certificate() {
   local key_path="$CERT_DIR/$domain/privkey.pem"
 
   if [[ -f "$cert_path" && -f "$key_path" ]]; then
-    local expiry_date=$(openssl x509 -in "$cert_path" -noout -enddate | cut -d'=' -f2)
-    local expiry_ts=$(date -d "$expiry_date" +%s)
-    local current_ts=$(date +%s)
-    local days_left=$(( (expiry_ts - current_ts) / 86400 ))
-    if [[ $days_left -gt 30 ]]; then
-      read -p "$(printf "$(get_msg confirm_reissue)" "$days_left")" reissue
-      [[ "${reissue:-N}" =~ ^[Yy]$ ]] || return 0
+    local expiry_date=$(openssl x509 -in "$cert_path" -noout -enddate | sed 's/notAfter=//')
+    if [[ -n "$expiry_date" ]]; then
+      local expiry_ts=$(date -d "$expiry_date" +%s 2>/dev/null)
+      local current_ts=$(date +%s 2>/dev/null)
+      if [[ -n "$expiry_ts" && -n "$current_ts" ]]; then
+        local days_left=$(( (expiry_ts - current_ts) / 86400 ))
+        log "Current certificate has $days_left days remaining"
+        read -p "$(printf "$(get_msg confirm_reissue)" "$days_left")" reissue
+        if [[ "${reissue:-N}" =~ ^[Yy]$ ]]; then
+          log "User chose to reissue certificate"
+        else
+          log "User chose to keep existing certificate"
+          return 0
+        fi
+      else
+        log "$(get_msg err_cert "$cert_path")" "$RED"
+        log "Unable to parse certificate validity, will attempt to reissue"
+      fi
+    else
+      log "$(get_msg err_cert "$cert_path")" "$RED"
+      log "Unable to read certificate expiry, will attempt to reissue"
     fi
   fi
 
   log "Issuing certificate..."
-  echo -e "${BLUE}$(get_msg select_cert)${NC}"
-  read -p "" cert_option
+  echo -e "${RED}$(get_msg select_cert)${NC}"
+  read -p "$(get_msg input_option)" cert_option
   case "$cert_option" in
     1)
       if lsof -i :80 >/dev/null 2>&1; then
@@ -371,11 +416,10 @@ issue_certificate() {
   "$ACME_SH" --installcert -d "$domain" --cert-file "$cert_path" --key-file "$key_path" --force || { log "Error: Failed to install certificate!" "$RED"; exit 1; }
 }
 
-# 检查 SSL 证书环境（改进版）
+# 检查 SSL 证书环境
 check_ssl_certificates() {
   log "$(get_msg check_ssl)"
 
-  # 检查 OpenSSL
   if ! command -v openssl &>/dev/null; then
     log "Error: OpenSSL not detected, installing..." "$RED"
     update_package_index
@@ -383,7 +427,6 @@ check_ssl_certificates() {
     log "OpenSSL installed" "$GREEN"
   fi
 
-  # 检查 CA 文件（支持多路径）
   local ca_files=("/etc/ssl/certs/ca-certificates.crt" "/etc/pki/tls/certs/ca-bundle.crt")
   local ca_file=""
   for file in "${ca_files[@]}"; do
@@ -398,10 +441,9 @@ check_ssl_certificates() {
     update_package_index
     timeout 60 apt install -y ca-certificates &>/dev/null || { log "Warning: Failed to install CA certificates, proceeding anyway" "$YELLOW"; return 0; }
     log "CA certificates installed" "$GREEN"
-    ca_file="${ca_files[0]}"  # 假设安装后文件出现在默认路径
+    ca_file="${ca_files[0]}"
   fi
 
-  # 检查 CA 文件有效性（本地检查）
   if [[ -f "$ca_file" ]]; then
     local expiry_date=$(openssl crl2pkcs7 -nocrl -certfile "$ca_file" | openssl pkcs7 -print_certs -noout 2>/dev/null | grep -m 1 "notAfter" | cut -d'=' -f2)
     if [[ -n "$expiry_date" ]]; then
@@ -447,7 +489,7 @@ create_config() {
   log "Using password: $password"
 
   mkdir -p "$CONFIG_DIR"
-  cat <<EOF > "$CONFIG_DIR/config.yaml"
+  cat <<EOF > "$CONFIG_FILE"
 listen: :$main_port
 tls:
   cert: "$CERT_DIR/$domain/fullchain.pem"
@@ -474,20 +516,20 @@ EOF
 # 创建并启动 systemd 服务
 setup_service() {
   log "$(get_msg create_service)"
-  cat <<EOF > /etc/systemd/system/hysteria.service
+  cat <<EOF > "$SYSTEMD_SERVICE"
 [Unit]
 Description=Hysteria2 Service
 After=network.target
 [Service]
-ExecStart=/usr/local/bin/hysteria server --config $CONFIG_DIR/config.yaml
+ExecStart=/usr/local/bin/hysteria server --config $CONFIG_FILE
 Restart=always
 User=root
 [Install]
 WantedBy=multi-user.target
 EOF
   systemctl daemon-reload
-  systemctl enable hysteria
-  systemctl start hysteria || { log "Error: Service start failed!" "$RED"; exit 1; }
+  systemctl enable "$SERVICE_NAME"
+  systemctl start "$SERVICE_NAME" || { log "Error: Service start failed!" "$RED"; exit 1; }
 }
 
 # 健康检查 Hysteria2 服务
@@ -495,7 +537,7 @@ check_health() {
   local domain="$1" main_port="$2"
   log "$(get_msg check_health)"
   sleep 2
-  if ! systemctl is-active --quiet hysteria; then
+  if ! systemctl is-active --quiet "$SERVICE_NAME"; then
     log "Error: Service not running!" "$RED"
     return 1
   fi
@@ -542,13 +584,64 @@ EOF
   command -v qrencode &>/dev/null && { log "Generating QR code:" "$GREEN"; echo "$sub_link" | qrencode -t ansiutf8; }
 }
 
-# 主逻辑
-main() {
-  init_logging
-  select_language
-  check_root
-  check_dependencies
+# 查看服务状态
+view_service_status() {
+  log "$(get_msg service_status)"
+  systemctl status "$SERVICE_NAME" --no-pager
+}
 
+# 查看最近 30 条日志
+view_service_logs() {
+  log "$(get_msg service_logs)"
+  journalctl -u "$SERVICE_NAME" -n 30 --no-pager
+}
+
+# 重启服务
+restart_service() {
+  log "$(get_msg service_restart)"
+  systemctl restart "$SERVICE_NAME" && log "Service restarted successfully" "$GREEN" || log "Error: Failed to restart service!" "$RED"
+}
+
+# 停止服务
+stop_service() {
+  log "$(get_msg service_stop)"
+  systemctl stop "$SERVICE_NAME" && log "Service stopped successfully" "$GREEN" || log "Error: Failed to stop service!" "$RED"
+}
+
+# 显示配置信息
+show_config_info() {
+  log "$(get_msg service_config)"
+  if [[ -f "$CONFIG_FILE" ]]; then
+    cat "$CONFIG_FILE"
+  else
+    log "Error: Config file $CONFIG_FILE not found!" "$RED"
+  fi
+}
+
+# 服务管理菜单
+manage_service() {
+  while true; do
+    clear  # 每次选择后清屏
+    echo -e "${RED}$(get_msg manage_menu)${NC}"
+    read -p "$(get_msg input_manage_option)" choice
+    case "$choice" in
+      1) view_service_status ;;
+      2) view_service_logs ;;
+      3) restart_service ;;
+      4) stop_service ;;
+      5) show_config_info ;;
+      6) return 0 ;;  # 返回上级菜单
+      7) log "Exiting script" "$GREEN"; exit 0 ;;  # 退出脚本
+      *) log "Invalid option, please choose 1-7" "$YELLOW" ;;
+    esac
+    read -p "$(get_msg continue_prompt)" cont
+    [[ "$cont" == "q" || "$cont" == "Q" ]] && break
+  done
+  return 0  # 确保退出循环后返回
+}
+
+# 安装 Hysteria2
+install_hysteria2() {
   local domain=$(get_domain)
   local email=$(get_email "$domain")
   local main_port=$(get_main_port)
@@ -563,9 +656,37 @@ main() {
   create_config "$domain" "$main_port"
   setup_service
   check_health "$domain" "$main_port" || exit 1
-  generate_configs "$domain" "$main_port" "$port_range" "$(grep 'password:' "$CONFIG_DIR/config.yaml" | awk '{print $2}')"
+  generate_configs "$domain" "$main_port" "$port_range" "$(grep 'password:' "$CONFIG_FILE" | awk '{print $2}')"
+}
 
-  log "$(get_msg install_done)" "$GREEN"
+# 主菜单循环
+main_menu() {
+  while true; do
+    clear  # 每次循环清屏
+    echo -e "${RED}$(get_msg service_exists)${NC}"
+    read -p "$(get_msg input_option)" action
+    case "$action" in
+      1) manage_service ;;
+      2) install_hysteria2; break ;;
+      *) log "Invalid option, please choose 1-2" "$YELLOW" ;;
+    esac
+  done
+}
+
+# 主逻辑
+main() {
+  init_logging
+  select_language
+  check_root
+
+  # 检查是否已存在 Hysteria2 服务
+  if [[ -f "$SYSTEMD_SERVICE" && -f /usr/local/bin/hysteria ]]; then
+    main_menu
+  else
+    install_hysteria2
+  fi
+
+  log "$(get_msg install_done "$CONFIG_FILE")" "$GREEN"
 }
 
 # 捕获中断信号
