@@ -1,433 +1,400 @@
 #!/bin/bash
-# 定义颜色变量
+
+# 定义颜色变量用于终端输出
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+NC='\033[0m' # 无色
 
-# 定义日志文件
+# 定义全局变量
 LOG_FILE="/var/log/install_hysteria.log"
+LOG_MAX_SIZE=$((5 * 1024 * 1024)) # 日志最大 5MB
+BACKUP_DIR="/var/backups/hysteria"
+CONFIG_DIR="/etc/hysteria"
+CERT_DIR="/etc/ssl/certs"
+ACME_SH="$HOME/.acme.sh/acme.sh"
+SCRIPT_LANG=""
 
-# 初始化日志文件 
-mkdir -p "$(dirname "$LOG_FILE")"
-if ! touch "$LOG_FILE" 2>/dev/null; then
-  log "错误：无法创建日志文件，请检查权限！"
-  exit 1
-fi
+# 初始化日志文件并检查权限
+init_logging() {
+  local log_dir=$(dirname "$LOG_FILE")
+  mkdir -p "$log_dir" || { echo -e "${RED}Cannot create log directory $log_dir${NC}"; exit 1; }
+  touch "$LOG_FILE" 2>/dev/null || { echo -e "${RED}Cannot create log file $LOG_FILE${NC}"; exit 1; }
+}
 
-# 记录日志函数
+# 日志记录函数，支持轮转
 log() {
   local message="$1"
-  if ! touch "$LOG_FILE" 2>/dev/null; then
-    echo "错误：日志文件不可写！"
-    exit 1
+  local color="${2:-$NC}"
+  local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+  if [[ -f "$LOG_FILE" && $(stat -c%s "$LOG_FILE") -ge $LOG_MAX_SIZE ]]; then
+    mv "$LOG_FILE" "${LOG_FILE}.$(date '+%Y%m%d%H%M%S').bak"
+    touch "$LOG_FILE"
+    echo "$timestamp - ${YELLOW}$(get_msg log_rotated)${NC}" >> "$LOG_FILE"
   fi
-  echo "$(date '+%Y-%m-%d %H:%M:%S') - $message" | tee -a "$LOG_FILE"
+  echo -e "$timestamp - ${color}${message}${NC}" | tee -a "$LOG_FILE"
+}
+
+# 语言选择函数
+select_language() {
+  echo "请选择语言/Select language:"
+  echo "1) 中文/Chinese"
+  echo "2) 英文/English"
+  read -p "输入选项/Enter option (1/2): " lang_choice
+  case "$lang_choice" in
+    1) SCRIPT_LANG="zh" ;;
+    2) SCRIPT_LANG="en" ;;
+    *) SCRIPT_LANG="zh" ; log "$(get_msg invalid_lang)" "$YELLOW" ;;
+  esac
+  log "$(get_msg using_lang): $SCRIPT_LANG"
+}
+
+# 定义语言提示
+declare -A MESSAGES
+# 中文提示
+MESSAGES[zh_input_domain]="请输入域名: "
+MESSAGES[zh_input_email]="域名证书申请邮箱 (默认自动生成): "
+MESSAGES[zh_input_port]="主端口 (默认 443): "
+MESSAGES[zh_input_range]="端口跳跃范围 (默认 40000-62000): "
+MESSAGES[zh_input_url]="伪装 URL (默认 https://wx.qq.com): "
+MESSAGES[zh_input_pwd]="密码 (默认生成 UUID): "
+MESSAGES[zh_input_hop]="端口跳跃间隔 (秒, 默认 30): "
+MESSAGES[zh_select_cert]="选择证书申请方式: 1) Standalone 2) Cloudflare 3) Aliyun\n选项 (1/2/3): "
+MESSAGES[zh_confirm_uninstall]="检测到已有 Hysteria2，是否卸载旧版本？(默认 Y)(Y/n): "
+MESSAGES[zh_confirm_backup]="是否备份旧版本配置？(默认 N)(y/N): "
+MESSAGES[zh_confirm_reissue]="证书有效，剩余 %d 天，是否重新获取？(y/N): "
+MESSAGES[zh_err_root]="错误：请以 root 用户运行此脚本！"
+MESSAGES[zh_err_domain]="错误：无效的域名格式或解析不正确！"
+MESSAGES[zh_err_ssl]="错误：OpenSSL 未安装或 CA 证书有问题！"
+MESSAGES[zh_check_deps]="检查并安装依赖项..."
+MESSAGES[zh_update_index]="更新包索引..."
+MESSAGES[zh_install_dep]="安装依赖 %s..."
+MESSAGES[zh_install_opt_dep]="安装可选依赖 %s..."
+MESSAGES[zh_err_install]="错误：安装 %s 失败！详情：%s"
+MESSAGES[zh_warn_install]="警告：安装 %s 失败，但将继续执行..."
+MESSAGES[zh_deps_done]="依赖检查完成"
+MESSAGES[zh_log_rotated]="日志已轮转"
+MESSAGES[zh_invalid_lang]="无效选项，默认使用中文"
+MESSAGES[zh_using_lang]="使用语言"
+MESSAGES[zh_backup_uninstall]="备份并卸载旧版本..."
+MESSAGES[zh_backup_done]="旧配置已备份至: %s"
+MESSAGES[zh_config_firewall]="配置防火墙规则..."
+MESSAGES[zh_check_ssl]="检查 SSL 证书环境..."
+MESSAGES[zh_download_hy2]="下载 Hysteria2 (%d/%d)..."
+MESSAGES[zh_create_service]="创建服务..."
+MESSAGES[zh_check_health]="检查服务健康状态..."
+MESSAGES[zh_service_ok]="服务正常运行"
+MESSAGES[zh_install_done]="安装完成！"
+# 英文提示
+MESSAGES[en_input_domain]="Please enter the domain: "
+MESSAGES[en_input_email]="Email for certificate application (default auto-generated): "
+MESSAGES[en_input_port]="Main port (default 443): "
+MESSAGES[en_input_range]="Port hopping range (default 40000-62000): "
+MESSAGES[en_input_url]="Masquerade URL (default https://wx.qq.com): "
+MESSAGES[en_input_pwd]="Password (default UUID generated): "
+MESSAGES[en_input_hop]="Port hopping interval (seconds, default 30): "
+MESSAGES[en_select_cert]="Select certificate issuance method: 1) Standalone 2) Cloudflare 3) Aliyun\nOption (1/2/3): "
+MESSAGES[en_confirm_uninstall]="Existing Hysteria2 detected, uninstall old version? (default Y)(Y/n): "
+MESSAGES[en_confirm_backup]="Backup old version config? (default N)(y/N): "
+MESSAGES[en_confirm_reissue]="Certificate valid, %d days remaining, reissue? (y/N): "
+MESSAGES[en_err_root]="Error: Please run this script as root!"
+MESSAGES[en_err_domain]="Error: Invalid domain format or resolution!"
+MESSAGES[en_err_ssl]="Error: OpenSSL not installed or CA certificates issue!"
+MESSAGES[en_check_deps]="Checking and installing dependencies..."
+MESSAGES[en_update_index]="Updating package index..."
+MESSAGES[en_install_dep]="Installing dependency %s..."
+MESSAGES[en_install_opt_dep]="Installing optional dependency %s..."
+MESSAGES[en_err_install]="Error: Failed to install %s! Details: %s"
+MESSAGES[en_warn_install]="Warning: Failed to install %s, but continuing..."
+MESSAGES[en_deps_done]="Dependencies check completed"
+MESSAGES[en_log_rotated]="Log rotated"
+MESSAGES[en_invalid_lang]="Invalid choice, defaulting to Chinese"
+MESSAGES[en_using_lang]="Using language"
+MESSAGES[en_backup_uninstall]="Backing up and uninstalling old version..."
+MESSAGES[en_backup_done]="Old config backed up to: %s"
+MESSAGES[en_config_firewall]="Configuring firewall rules..."
+MESSAGES[en_check_ssl]="Checking SSL certificate environment..."
+MESSAGES[en_download_hy2]="Downloading Hysteria2 (%d/%d)..."
+MESSAGES[en_create_service]="Creating service..."
+MESSAGES[en_check_health]="Checking service health..."
+MESSAGES[en_service_ok]="Service running normally"
+MESSAGES[en_install_done]="Installation completed!"
+
+# 获取语言特定消息
+get_msg() {
+  local key="$1"
+  shift
+  printf "${MESSAGES[${SCRIPT_LANG}_${key}]}" "$@"
 }
 
 # 检查是否以 root 用户运行
-[[ $EUID -ne 0 ]] && echo -e "${RED}错误：请以 root 用户运行此脚本！${NC}" && exit 1
-
-# 检查依赖项
-check_dependencies() {
-  local dependencies=("curl" "wget" "jq" "iptables" "ip6tables" "netfilter-persistent" "dnsutils" "uuid-runtime")
-  for dep in "${dependencies[@]}"; do
-    dpkg -s "$dep" &>/dev/null || sudo apt install -y "$dep" &>/dev/null
-  done
+check_root() {
+  [[ $EUID -ne 0 ]] && { log "$(get_msg err_root)" "$RED"; exit 1; }
 }
-check_dependencies
 
-# 询问用户输入域名
-read -p "请输入域名: " domain
+# 检查并安装依赖项
+check_dependencies() {
+  local required_deps=("curl" "wget" "jq" "iptables" "dnsutils" "uuid-runtime")
+  local optional_deps=("ip6tables" "netfilter-persistent")
+  log "$(get_msg check_deps)"
 
-# 检查域名格式是否正确
+  log "$(get_msg update_index)"
+  timeout 30 apt update &>/dev/null || log "Warning: Failed to update package index, possible network issue" "$YELLOW"
+
+  for dep in "${required_deps[@]}"; do
+    if ! dpkg -s "$dep" &>/dev/null; then
+      log "$(get_msg install_dep "$dep")"
+      timeout 60 apt install -y "$dep" &>/dev/null
+      if [[ $? -ne 0 ]]; then
+        log "$(get_msg err_install "$dep" "$(apt install -y "$dep" 2>&1)")" "$RED"
+        exit 1
+      fi
+    fi
+  done
+
+  for dep in "${optional_deps[@]}"; do
+    if ! dpkg -s "$dep" &>/dev/null; then
+      log "$(get_msg install_opt_dep "$dep")"
+      timeout 60 apt install -y "$dep" &>/dev/null || log "$(get_msg warn_install "$dep")" "$YELLOW"
+    fi
+  done
+  log "$(get_msg deps_done)"
+}
+
+# 获取用户输入的域名并验证
+get_domain() {
+  read -p "$(get_msg input_domain)" domain
+  until validate_domain_format "$domain" && validate_domain_resolution "$domain"; do
+    log "$(get_msg err_domain)" "$RED"
+    read -p "$(get_msg input_domain)" domain
+  done
+  echo "$domain"
+}
+
+# 验证域名格式
 validate_domain_format() {
   local domain="$1"
-  if [[ "$domain" =~ ^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$ ]]; then
-    return 0
-  else
-    return 1
-  fi
+  [[ "$domain" =~ ^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$ ]] && return 0
+  return 1
 }
 
-# 检查域名解析是否正确
+# 验证域名解析是否匹配本地公网 IP
 validate_domain_resolution() {
   local domain="$1"
-  local server_ip=$(dig +short "$domain" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$')
+  local server_ip=$(dig +short "$domain" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | sort -u)
   local local_ip=$(curl -s http://api4.ipify.org/)
-
-  if [[ -z "$server_ip" || -z "$local_ip" ]]; then
-    log "错误：无法获取域名解析或本地 IP 地址！"
-    return 1
-  fi
-  
-  # Check if any of the resolved IPs match the local IP
-  if ! grep -q "$local_ip" <<< "$server_ip"; then
-    log "错误：域名解析 IP ($server_ip) 与本机公网 IP ($local_ip) 不匹配！"
-    return 1
-  fi
+  [[ -z "$server_ip" || -z "$local_ip" ]] && return 1
+  echo "$server_ip" | grep -q "$local_ip" || return 1
   return 0
 }
 
-if ! validate_domain_format "$domain"; then
-  log "错误：无效的域名格式！"
-  exit 1 
-fi
+# 获取用户邮箱，默认为 admin@domain
+get_email() {
+  local domain="$1"
+  read -p "$(get_msg input_email)" email
+  email=${email:-"admin@$domain"}
+  log "Using email: $email"
+  echo "$email"
+}
 
-if ! validate_domain_resolution "$domain"; then
-  log "错误：域名解析不正确！请确保 $domain 解析到当前服务器的公网 IP 地址。"
-  exit 1 
-fi
+# 安装 acme.sh（如果未安装）
+install_acme_sh() {
+  [[ -f "$ACME_SH" ]] && return 0
+  log "Installing acme.sh..."
+  curl https://get.acme.sh | sh || { log "Error: Failed to install acme.sh!" "$RED"; exit 1; }
+}
 
-log "域名解析成功，开始安装 Hysteria2..."
-
-# 自动生成邮箱地址（如果用户没有输入）
-read -p "域名证书申请邮箱 (默认自动生成): " email
-if [[ -z "$email" ]]; then
-  email="admin@$domain"
-  log "未提供邮箱，已使用默认邮箱：$email"
-fi
-
-# 处理证书申请
-# 确保 acme.sh 已经安装并设置路径
-if [ ! -f "$HOME/.acme.sh/acme.sh" ]; then
-  log "未检测到 acme.sh 脚本，正在安装..."
-  curl https://get.acme.sh | sh
-fi
-ACME_SH="$HOME/.acme.sh/acme.sh"  # 设置正确的 acme.sh 路径
-
-# 检查是否已安装 Hysteria2
+# 检查并备份已有 Hysteria2 配置
 check_existing_hysteria() {
   if [[ -f /usr/local/bin/hysteria ]]; then
-    read -p "卸载旧版本 Hysteria2？(默认卸载)(Y/n): " confirm
-    confirm=${confirm:-Y}
-    if [[ "$confirm" == "Y" || "$confirm" == "y" ]]; then
-      systemctl stop hysteria || true
-      systemctl disable hysteria || true
-      rm -f /usr/local/bin/hysteria
-      rm -rf /etc/hysteria
-      rm -f /etc/systemd/system/hysteria2.service
-      log "已卸载旧版本 Hysteria2。"
+    read -p "$(get_msg confirm_uninstall)" confirm_uninstall
+    confirm_uninstall=${confirm_uninstall:-Y}
+    if [[ "$confirm_uninstall" =~ ^[Yy]$ ]]; then
+      read -p "$(get_msg confirm_backup)" confirm_backup
+      confirm_backup=${confirm_backup:-N}
+      if [[ "$confirm_backup" =~ ^[Yy]$ ]]; then
+        log "$(get_msg backup_uninstall)"
+        mkdir -p "$BACKUP_DIR"
+        local backup_file="$BACKUP_DIR/hysteria_backup_$(date '+%Y%m%d%H%M%S').tar.gz"
+        tar -czf "$backup_file" /usr/local/bin/hysteria "$CONFIG_DIR" /etc/systemd/system/hysteria2.service 2>/dev/null
+        log "$(get_msg backup_done "$backup_file")" "$GREEN"
+      fi
+      systemctl stop hysteria &>/dev/null || true
+      systemctl disable hysteria &>/dev/null || true
+      rm -f /usr/local/bin/hysteria /etc/systemd/system/hysteria2.service
+      rm -rf "$CONFIG_DIR"
     else
-      log "取消安装。"
-      exit 1
+      log "Canceled installation"
+      exit 0
     fi
   fi
 }
-check_existing_hysteria
 
-# 获取主端口（如果用户未输入，则使用默认值 443）
-read -p "主端口 (默认 443): " raw_main_port
-main_port=${raw_main_port:-443}
-until [[ "$main_port" =~ ^[0-9]+$ && "$main_port" -ge 1 && "$main_port" -le 65535 ]]; do
-  log "错误：无效的主端口号，请输入 1-65535 之间的数字！"
-  read -p "请重新输入主端口 (默认 443，直接回车使用默认值): " raw_main_port
+# 获取主端口，默认 443
+get_main_port() {
+  read -p "$(get_msg input_port)" raw_main_port
   main_port=${raw_main_port:-443}
-done
-
-# 获取端口范围（如果用户未输入，则使用默认值 40000-62000）
-read -p "端口跳跃范围 (默认 40000-62000): " raw_port_range
-format_port_range() {
-  local input="$1"
-    
-  # 替换 '-' 或 ',' 为 ':'
-  local formatted=$(echo "$input" | sed -E 's/[-,]/:/g')
-  
-  # 检查格式是否合法
-  if [[ "$formatted" =~ ^[0-9]+:[0-9]+$ ]]; then
-    local start_port=$(echo "$formatted" | cut -d ':' -f 1)
-    local end_port=$(echo "$formatted" | cut -d ':' -f 2)
-    
-    # 验证端口范围是否有效
-    if [[ "$start_port" -ge 1 && "$end_port" -le 65535 && "$start_port" -le "$end_port" ]]; then
-      echo "$formatted"
-      return 0
-    fi
-  fi
-  
-  # 如果格式无效，返回错误
-  echo ""
-  return 1
+  until [[ "$main_port" =~ ^[0-9]+$ && "$main_port" -ge 1 && "$main_port" -le 65535 ]]; do
+    log "Error: Invalid port!" "$RED"
+    read -p "$(get_msg input_port)" raw_main_port
+    main_port=${raw_main_port:-443}
+  done
+  echo "$main_port"
 }
-formatted_port_range=$(format_port_range "${raw_port_range:-40000-62000}")
-if [[ -z "$formatted_port_range" ]]; then
-  log "错误：无效的端口范围格式，请使用 '起始端口-结束端口' 或 '起始端口:结束端口' 格式！"
-  exit 1
-fi
 
-# 获取网络接口名称
-network_interface=$(ip -o -4 route show to default | awk '{print $5}')
-if [[ -z "$network_interface" ]]; then
-  log "错误：无法检测到默认网络接口，请手动指定！"
-  exit 1
-fi
-
-# 检查系统是否支持 IPv6
-check_ipv6_support() {
-  if ip -6 route list | grep -q "default"; then
-    return 0
-  else
-    return 1
-  fi
+# 获取端口跳跃范围，默认 40000-62000
+get_port_range() {
+  read -p "$(get_msg input_range)" raw_port_range
+  raw_port_range=${raw_port_range:-"40000-62000"}
+  local formatted=$(echo "$raw_port_range" | sed 's/[-,:]/:/g')
+  local start_port=$(echo "$formatted" | cut -d':' -f1)
+  local end_port=$(echo "$formatted" | cut -d':' -f2)
+  until [[ "$start_port" =~ ^[0-9]+$ && "$end_port" =~ ^[0-9]+$ && "$start_port" -ge 1 && "$end_port" -le 65535 && "$start_port" -le "$end_port" ]]; do
+    log "Error: Invalid range!" "$RED"
+    read -p "$(get_msg input_range)" raw_port_range
+    raw_port_range=${raw_port_range:-"40000-62000"}
+    formatted=$(echo "$raw_port_range" | sed 's/[-,:]/:/g')
+    start_port=$(echo "$formatted" | cut -d':' -f1)
+    end_port=$(echo "$formatted" | cut -d':' -f2)
+  done
+  echo "$formatted"
 }
 
 # 配置防火墙规则
 manage_firewall_rules() {
   local port_range="$1"
-  local interface="$2"
+  local interface=$(ip -o -4 route show to default | awk '{print $5}')
+  [[ -z "$interface" ]] && { log "Error: Cannot detect network interface!" "$RED"; exit 1; }
 
-  # 删除所有可能的端口跳跃规则
-  for rule in $(sudo iptables -t nat -L PREROUTING -n --line-numbers | grep "REDIRECT" | awk '{print $1}'); do
-    sudo iptables -t nat -D PREROUTING $rule
-  done
+  log "$(get_msg config_firewall)"
+  iptables -t nat -F PREROUTING &>/dev/null
+  iptables -F INPUT &>/dev/null
+  ip6tables -t nat -F PREROUTING &>/dev/null 2>/dev/null || true
+  ip6tables -F INPUT &>/dev/null 2>/dev/null || true
 
-  for rule in $(sudo iptables -L INPUT -n --line-numbers | grep "multiport" | awk '{print $1}'); do
-    sudo iptables -D INPUT $rule
-  done
-
-  if command -v ip6tables &>/dev/null; then
-    for rule in $(sudo ip6tables -t nat -L PREROUTING -n --line-numbers | grep "REDIRECT" | awk '{print $1}'); do
-      sudo ip6tables -t nat -D PREROUTING $rule
-    done
-
-    for rule in $(sudo ip6tables -L INPUT -n --line-numbers | grep "multiport" | awk '{print $1}'); do
-      sudo ip6tables -D INPUT $rule
-    done
+  iptables -t nat -A PREROUTING -i "$interface" -p udp --dport "$port_range" -j REDIRECT --to-ports "$main_port"
+  iptables -A INPUT -p udp -m multiport --dports "$port_range" -j ACCEPT
+  if command -v ip6tables &>/dev/null && ip -6 route list | grep -q "default"; then
+    ip6tables -t nat -A PREROUTING -i "$interface" -p udp --dport "$port_range" -j REDIRECT --to-ports "$main_port"
+    ip6tables -A INPUT -p udp -m multiport --dports "$port_range" -j ACCEPT
   fi
 
-  # 添加新的规则
-  sudo iptables -t nat -A PREROUTING -i "$interface" -p udp --dport "$port_range" -j REDIRECT --to-ports $main_port
-  sudo iptables -A INPUT -p udp -m multiport --dports "$port_range" -j ACCEPT
-
-  if command -v ip6tables &>/dev/null; then
-    sudo ip6tables -t nat -A PREROUTING -i "$interface" -p udp --dport "$port_range" -j REDIRECT --to-ports $main_port
-    sudo ip6tables -A INPUT -p udp -m multiport --dports "$port_range" -j ACCEPT
-  fi
-
-  # 保存规则
   mkdir -p /etc/iptables
-  sudo iptables-save > /etc/iptables/rules.v4
-  if command -v ip6tables-save &>/dev/null; then
-    sudo ip6tables-save > /etc/iptables/rules.v6
-  fi
-  sudo netfilter-persistent save
+  iptables-save > /etc/iptables/rules.v4
+  ip6tables-save > /etc/iptables/rules.v6 2>/dev/null || true
+  netfilter-persistent save &>/dev/null || log "Warning: Failed to save firewall rules" "$YELLOW"
 }
-log "配置防火墙规则 ..."
-manage_firewall_rules "$formatted_port_range" "$network_interface"
 
-# 安装证书
-log "检查现有证书..."
-existing_cert="/etc/ssl/certs/$domain/fullchain.pem"
-existing_key="/etc/ssl/certs/$domain/privkey.pem"
+# 获取并安装 SSL 证书
+issue_certificate() {
+  local domain="$1" email="$2"
+  local cert_path="$CERT_DIR/$domain/fullchain.pem"
+  local key_path="$CERT_DIR/$domain/privkey.pem"
 
-# 检查证书
-if [[ -f "$existing_cert" && -f "$existing_key" ]]; then
-  expiry_date=$(openssl x509 -in "$existing_cert" -noout -enddate | cut -d'=' -f2)
-  current_date=$(date -u +%s)
-  expiry_timestamp=$(date -ud "$expiry_date" +%s)
-  days_until_expiry=$(( (expiry_timestamp - current_date) / 86400 ))
-
-  if [[ $days_until_expiry -gt 30 ]]; then
-    read -p "证书有效，$days_until_expiry 天后过期。是否重新获取？(默认否)(y/N): " reissue_cert
-    reissue_cert=${reissue_cert:-N}
-    if [[ "$reissue_cert" == "y" || "$reissue_cert" == "Y" ]]; then
-      skip_certificate_issue=false
-    else
-      skip_certificate_issue=true
+  if [[ -f "$cert_path" && -f "$key_path" ]]; then
+    local expiry_date=$(openssl x509 -in "$cert_path" -noout -enddate | cut -d'=' -f2)
+    local expiry_ts=$(date -d "$expiry_date" +%s)
+    local current_ts=$(date +%s)
+    local days_left=$(( (expiry_ts - current_ts) / 86400 ))
+    if [[ $days_left -gt 30 ]]; then
+      read -p "$(printf "$(get_msg confirm_reissue)" "$days_left")" reissue
+      [[ "${reissue:-N}" =~ ^[Yy]$ ]] || return 0
     fi
-  else
-    log "检测到的证书即将过期或已过期，将重新获取证书。"
-    skip_certificate_issue=false
   fi
-else
-  log "未检测到现有证书，将重新获取证书。"
-  skip_certificate_issue=false
-fi
 
-if [[ "$skip_certificate_issue" == false ]]; then
-# 选择证书申请方式
-  echo -e "${BLUE}选择证书申请方式:${NC}"
-  echo "1) Standalone 2) Cloudflare 3) Aliyun"
-  read -p "选项 (1/2/3): " cert_option
-  case $cert_option in
+  log "Issuing certificate..."
+  echo -e "${BLUE}$(get_msg select_cert)${NC}"
+  read -p "" cert_option
+  case "$cert_option" in
     1)
-      # Standalone 模式的证书申请
-      # 检查 80 端口是否被占用
-      if sudo lsof -i :80 >/dev/null 2>&1; then
-        log "警告：80 端口已被占用，尝试停止相关服务..."
-        if systemctl list-units --type=service | grep -q nginx; then
-          sudo systemctl stop nginx || true
-        fi
-        if systemctl list-units --type=service | grep -q apache2; then
-          sudo systemctl stop apache2 || true
-        fi
+      if lsof -i :80 >/dev/null 2>&1; then
+        log "Warning: Port 80 occupied, releasing..." "$YELLOW"
+        systemctl stop nginx &>/dev/null || true
+        systemctl stop apache2 &>/dev/null || true
       fi
-      # 允许 80 端口流量
-      if ! sudo iptables -C INPUT -p tcp --dport 80 -j ACCEPT 2>/dev/null; then
-        sudo iptables -A INPUT -p tcp --dport 80 -j ACCEPT
-        sudo iptables-save > /etc/iptables/rules.v4
-        sudo netfilter-persistent save
-      fi
-      # 创建 webroot 目录
-      sudo mkdir -p /var/www/html/.well-known/acme-challenge
-      sudo chmod -R 755 /var/www/html
-      # 增加重试机制
-      max_retries=3
-      retry_interval=20
-      retry_count=0
-      while [[ $retry_count -lt $max_retries ]]; do
-        log "正在尝试通过 Standalone 模式申请证书，第 $((retry_count + 1)) 次尝试..."
-        if "$ACME_SH" --issue -d "$domain" --standalone -m "$email" --force --debug; then
-          log "域名验证成功！"
-          break
-        else
-          retry_count=$((retry_count + 1))
-          sleep $retry_interval
-        fi
-      done
-      if [[ $retry_count -eq $max_retries ]]; then
-        log "错误：域名验证失败，请检查日志！"
-        exit 1
-      fi
-      
-      # 关闭80端口的流量
-      sudo iptables -D INPUT -p tcp --dport 80 -j ACCEPT
-      sudo iptables-save > /etc/iptables/rules.v4
-      sudo netfilter-persistent save
-      log "已关闭 80 端口的流量。"
+      iptables -A INPUT -p tcp --dport 80 -j ACCEPT &>/dev/null
+      "$ACME_SH" --issue -d "$domain" --standalone -m "$email" --force || { log "Error: Failed to issue certificate via Standalone!" "$RED"; exit 1; }
+      iptables -D INPUT -p tcp --dport 80 -j ACCEPT &>/dev/null
       ;;
     2)
-      read -p "请输入 Cloudflare API Key: " cloudflare_api_key
-      read -s -p "请输入 Cloudflare Email: " cloudflare_email
-      export CF_Key="$cloudflare_api_key"
-      export CF_Email="$cloudflare_email"
-      if ! "$ACME_SH" --issue --dns dns_cf -d "$domain" -m "$email" --force --debug; then
-        log "错误：Cloudflare API 密钥无效或域名配置错误，请检查！"
-        unset CF_Key
-        unset CF_Email
-        exit 1
-      fi
-      unset CF_Key
-      unset CF_Email
+      read -p "Cloudflare API Key: " cf_key
+      read -s -p "Cloudflare Email: " cf_email; echo
+      export CF_Key="$cf_key" CF_Email="$cf_email"
+      "$ACME_SH" --issue --dns dns_cf -d "$domain" -m "$email" --force || { log "Error: Failed to issue certificate via Cloudflare!" "$RED"; exit 1; }
+      unset CF_Key CF_Email
       ;;
     3)
-      read -p "请输入阿里云 AccessKey ID: " aliyun_access_key_id
-      read -s -p "请输入阿里云 AccessKey Secret: " aliyun_access_key_secret
-      export Ali_Key="$aliyun_access_key_id"
-      export Ali_Secret="$aliyun_access_key_secret"
-      if ! "$ACME_SH" --issue --dns dns_ali -d "$domain" -m "$email" --force --debug; then
-        log "错误：Aliyun API 密钥无效或域名配置错误，请检查！"
-        unset Ali_Key
-        unset Ali_Secret
-        exit 1
-      fi
-      unset Ali_Key
-      unset Ali_Secret
+      read -p "Aliyun AccessKey ID: " ali_key
+      read -s -p "Aliyun AccessKey Secret: " ali_secret; echo
+      export Ali_Key="$ali_key" Ali_Secret="$ali_secret"
+      "$ACME_SH" --issue --dns dns_ali -d "$domain" -m "$email" --force || { log "Error: Failed to issue certificate via Aliyun!" "$RED"; exit 1; }
+      unset Ali_Key Ali_Secret
       ;;
     *)
-      log "${RED}无效选项，退出安装"
-      exit 1
+      log "Error: Invalid option!" "$RED"; exit 1
       ;;
   esac
 
-  # 创建证书目录（如果不存在）
-  mkdir -p "/etc/ssl/certs/$domain"
-
-  # 安装证书
-  log "正在安装证书..."
-  "$ACME_SH" --installcert -d "$domain" \
-    --cert-file "/etc/ssl/certs/$domain/fullchain.pem" \
-    --key-file "/etc/ssl/certs/$domain/privkey.pem" \
-    --force
-
-  # 验证证书文件是否存在
-  if [[ ! -f "/etc/ssl/certs/$domain/fullchain.pem" || ! -f "/etc/ssl/certs/$domain/privkey.pem" ]]; then
-    log "${RED}错误：证书安装失败，请检查 acme.sh 的配置！"
-    exit 1
-  fi
-fi
+  mkdir -p "$CERT_DIR/$domain"
+  "$ACME_SH" --installcert -d "$domain" --cert-file "$cert_path" --key-file "$key_path" --force || { log "Error: Failed to install certificate!" "$RED"; exit 1; }
+}
 
 # 检查 SSL 证书路径或相关文件是否有问题
 check_ssl_certificates() {
-  local openssl_check=$(command -v openssl)
-  if [[ -z "$openssl_check" ]]; then
-    echo -e "${RED}错误：未检测到 OpenSSL，正在安装...${NC}"
-    if ! apt update && apt install -y openssl &>/dev/null; then
-      echo -e "${RED}错误：OpenSSL 安装失败，请手动安装！${NC}"
-      exit 1
-    fi
+  log "$(get_msg check_ssl)"
+  if ! command -v openssl &>/dev/null; then
+    log "Error: OpenSSL not detected, installing..." "$RED"
+    apt update && apt install -y openssl &>/dev/null || { log "$(get_msg err_ssl)" "$RED"; exit 1; }
+    log "OpenSSL installed" "$GREEN"
   fi
 
-  # 检查CA证书包是否支持HTTPS和TLS连接
-  local cert_check=$(echo | openssl s_client -connect github.com:443 -CAfile /etc/ssl/certs/ca-certificates.crt 2>/dev/null | grep -q 'Verify return code: 0 (ok)' && echo "OK" || echo "FAIL")
-  
-  if [[ "$cert_check" != "OK" ]]; then
-    echo -e "${RED}警告：CA 证书包可能有问题，无法验证TLS连接，正在更新...${NC}"
-    if ! apt update && apt install -y --reinstall ca-certificates &>/dev/null; then
-      echo -e "${RED}错误：更新 CA 证书包失败，请手动检查！${NC}"
-      exit 1
+  local ca_file="/etc/ssl/certs/ca-certificates.crt"
+  if [[ -f "$ca_file" ]]; then
+    echo | openssl s_client -connect github.com:443 -CAfile "$ca_file" 2>/dev/null | grep -q 'Verify return code: 0 (ok)'
+    if [[ $? -ne 0 ]]; then
+      log "Warning: CA certificate issue, updating..." "$YELLOW"
+      apt update && apt install -y --reinstall ca-certificates &>/dev/null || { log "Error: Failed to update CA certificates!" "$RED"; exit 1; }
+      log "CA certificates updated" "$GREEN"
     fi
+  else
+    log "Error: Missing CA certificate file $ca_file!" "$RED"
+    apt update && apt install -y ca-certificates &>/dev/null || { log "Error: Failed to install CA certificates!" "$RED"; exit 1; }
+    log "CA certificates installed" "$GREEN"
   fi
 }
-
-check_ssl_certificates
 
 # 下载并安装 Hysteria2
-download_hysteria() {
-  local max_retries=3
-  local retry_interval=10
-  local retry_count=0
+install_hysteria() {
+  local max_retries=3 retry_count=0
   while [[ $retry_count -lt $max_retries ]]; do
-    log "正在尝试下载 Hysteria2，第 $((retry_count + 1)) 次尝试..."
-    latest_version=$(curl -sL https://api.github.com/repos/apernet/hysteria/releases/latest | jq -r '.tag_name')
-    if [[ -z "$latest_version" ]]; then
-      log "${RED}警告：无法获取 Hysteria2 最新版本，重试中..."
-      retry_count=$((retry_count + 1))
-      sleep $retry_interval
-      continue
-    fi
-    download_url="https://github.com/apernet/hysteria/releases/download/${latest_version}/hysteria-linux-amd64"
-    log "下载链接: $download_url"
-    wget -q "$download_url" -O /usr/local/bin/hysteria
-    if [[ $? -eq 0 ]]; then
-      log "Hysteria2 下载成功！"
-      break
-    else
-      log "${RED}警告：Hysteria2 下载失败，重试中..."
-      retry_count=$((retry_count + 1))
-      sleep $retry_interval
-    fi
+    log "$(get_msg download_hy2 "$((retry_count + 1))" "$max_retries")"
+    local version=$(curl -sL https://api.github.com/repos/apernet/hysteria/releases/latest | jq -r '.tag_name')
+    [[ -z "$version" ]] && { log "Warning: Failed to get version..." "$YELLOW"; retry_count=$((retry_count + 1)); sleep 10; continue; }
+    local url="https://github.com/apernet/hysteria/releases/download/${version}/hysteria-linux-amd64"
+    wget -q "$url" -O /usr/local/bin/hysteria && break
+    retry_count=$((retry_count + 1))
+    sleep 10
   done
-  if [[ $retry_count -eq $max_retries ]]; then
-    log "错误：Hysteria2 下载失败，请检查网络连接！"
-    exit 1
-  fi
+  [[ $retry_count -eq $max_retries ]] && { log "Error: Download failed!" "$RED"; exit 1; }
+  chmod +x /usr/local/bin/hysteria
 }
 
-download_hysteria
-chmod +x /usr/local/bin/hysteria
-
-# 检查文件是否成功安装
-if [[ ! -f /usr/local/bin/hysteria ]]; then
-  log "${RED}错误：Hysteria2 安装失败，请检查网络连接或权限！"
-  exit 1
-fi
-
 # 创建 Hysteria2 配置文件
-mkdir -p /etc/hysteria
-read -p "伪装 URL (默认 https://wx.qq.com): " masquerade_url
-read -p "密码 (默认生成 UUID): " password
-if [[ -z "$password" ]]; then
-  password=$(uuidgen)
-  echo -e "${RED}密码: $password${NC}"
-fi
-[[ -z "$masquerade_url" ]] && masquerade_url="https://wx.qq.com"
-cat <<EOF > /etc/hysteria/config.yaml
+create_config() {
+  local domain="$1" main_port="$2"
+  read -p "$(get_msg input_url)" masquerade_url
+  read -p "$(get_msg input_pwd)" password
+  masquerade_url=${masquerade_url:-"https://wx.qq.com"}
+  password=${password:-$(uuidgen)}
+  log "Using password: $password"
+
+  mkdir -p "$CONFIG_DIR"
+  cat <<EOF > "$CONFIG_DIR/config.yaml"
 listen: :$main_port
 tls:
-  cert: "/etc/ssl/certs/$domain/fullchain.pem"
-  key: "/etc/ssl/certs/$domain/privkey.pem"
+  cert: "$CERT_DIR/$domain/fullchain.pem"
+  key: "$CERT_DIR/$domain/privkey.pem"
 auth:
   type: password
   password: "$password"
@@ -445,74 +412,105 @@ masquerade:
     rewriteHost: true
 speedTest: true
 EOF
+}
 
-# 创建 systemd 服务文件
-log "创建 systemd 服务文件..."
-cat <<EOF > /etc/systemd/system/hysteria.service
+# 创建并启动 systemd 服务
+setup_service() {
+  log "$(get_msg create_service)"
+  cat <<EOF > /etc/systemd/system/hysteria2.service
 [Unit]
 Description=Hysteria2 Service
 After=network.target
-
 [Service]
-ExecStart=/usr/local/bin/hysteria server --config /etc/hysteria/config.yaml
+ExecStart=/usr/local/bin/hysteria server --config $CONFIG_DIR/config.yaml
 Restart=always
 User=root
-
 [Install]
 WantedBy=multi-user.target
 EOF
+  systemctl daemon-reload
+  systemctl enable hysteria
+  systemctl start hysteria || { log "Error: Service start failed!" "$RED"; exit 1; }
+}
 
-# 启动并启用服务
-log "启动并启用 Hysteria2 服务..."
-systemctl daemon-reload
-systemctl enable hysteria
-systemctl start hysteria
+# 健康检查 Hysteria2 服务
+check_health() {
+  local domain="$1" main_port="$2"
+  log "$(get_msg check_health)"
+  sleep 2
+  if ! systemctl is-active --quiet hysteria; then
+    log "Error: Service not running!" "$RED"
+    return 1
+  fi
+  if command -v nc &>/dev/null; then
+    nc -z -u "$domain" "$main_port" &>/dev/null
+    if [[ $? -eq 0 ]]; then
+      log "$(get_msg service_ok)" "$GREEN"
+    else
+      log "Warning: Port $main_port not responding" "$YELLOW"
+      return 1
+    fi
+  else
+    log "Note: NC not installed, skipping port check" "$YELLOW"
+  fi
+  return 0
+}
 
-# 检查 Hysteria2 服务是否启动成功
-if systemctl is-active --quiet hysteria; then
-  echo -e "${GREEN}Hysteria2 已成功安装并启动！${NC}"
-  
-  # 设置端口跳跃间隔时间
-  read -p "端口跳跃间隔 (秒, 默认 30): " hop_interval
+# 生成订阅链接和 Clash 配置
+generate_configs() {
+  local domain="$1" main_port="$2" port_range="$3" password="$4"
+  read -p "$(get_msg input_hop)" hop_interval
   hop_interval=${hop_interval:-30}
-  
-# 获取当前计算机名
-hostname=$(hostname | tr -d '[:space:]' | tr -cd '[:alnum:]-_')
+  local hostname=$(hostname -s)
 
-generate_subscription_and_clash() {
-  # 解析端口范围（确保格式正确）
-  local start_port=$(echo "$formatted_port_range" | cut -d ':' -f 1)
-  local end_port=$(echo "$formatted_port_range" | cut -d ':' -f 2)
-  local ports_range="$start_port-$end_port"
-  
-  # 生成订阅链接，符合 Hysteria2 官方文档并添加名称信息
-  local subscription_link="hysteria2://$password@$domain:$main_port/?insecure=1&hopPorts=$formatted_port_range#[DIY_Hy2]$hostname"
+  local sub_link="hysteria2://$password@$domain:$main_port/?insecure=1&hopPorts=$port_range#[DIY_Hy2]$hostname"
   local clash_config=$(cat <<EOF
-  - name: "[DIY_Hy2]$hostname"
-    type: hysteria2
-    server: $domain
-    ports: $ports_range
-    password: $password
-    sni: $domain
-    skip-cert-verify: false
-    transport:
-      type: udp
-      udp:
-        hopInterval: ${hop_interval}s
+- name: "[DIY_Hy2]$hostname"
+  type: hysteria2
+  server: $domain
+  ports: $(echo "$port_range" | tr ':' '-')
+  password: $password
+  sni: $domain
+  skip-cert-verify: false
+  transport:
+    type: udp
+    udp:
+      hopInterval: ${hop_interval}s
 EOF
 )
 
-  echo -e "${GREEN}订阅链接:${NC} $subscription_link"
-  echo -e "${GREEN}注意:${NC} 请在您的客户端配置中手动设置端口跳跃间隔时间为 $hop_interval 秒。"
-  echo -e "${GREEN}生成订阅链接的二维码:${NC}"
-  echo -e "$subscription_link" | qrencode -t ansiutf8
-  echo -e "${GREEN}Clash节点配置模板:${NC}"
+  log "Subscription link: $sub_link" "$GREEN"
+  log "Clash config:" "$GREEN"
   echo "$clash_config"
+  command -v qrencode &>/dev/null && { log "Generating QR code:" "$GREEN"; echo "$sub_link" | qrencode -t ansiutf8; }
 }
-  
-  generate_subscription_and_clash
 
-else
-  echo -e "${RED}错误：Hysteria2 启动失败，请检查日志！${NC}"
-  exit 1
-fi
+# 主逻辑
+main() {
+  init_logging
+  select_language
+  check_root
+  check_dependencies
+
+  local domain=$(get_domain)
+  local email=$(get_email "$domain")
+  local main_port=$(get_main_port)
+  local port_range=$(get_port_range)
+
+  check_existing_hysteria
+  install_acme_sh
+  manage_firewall_rules "$port_range"
+  issue_certificate "$domain" "$email"
+  check_ssl_certificates
+  install_hysteria
+  create_config "$domain" "$main_port"
+  setup_service
+  check_health "$domain" "$main_port" || exit 1
+  generate_configs "$domain" "$main_port" "$port_range" "$(grep 'password:' "$CONFIG_DIR/config.yaml" | awk '{print $2}')"
+
+  log "$(get_msg install_done)" "$GREEN"
+}
+
+# 捕获中断信号
+trap 'log "Script interrupted, exiting..." "$YELLOW"; exit 1' INT TERM
+main
