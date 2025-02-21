@@ -15,6 +15,7 @@ CONFIG_DIR="/etc/hysteria"
 CERT_DIR="/etc/ssl/certs"
 ACME_SH="$HOME/.acme.sh/acme.sh"
 SCRIPT_LANG=""
+APT_UPDATED=false
 
 # 初始化日志文件并检查权限
 init_logging() {
@@ -66,7 +67,7 @@ MESSAGES[zh_confirm_backup]="是否备份旧版本配置？(默认 N)(y/N): "
 MESSAGES[zh_confirm_reissue]="证书有效，剩余 %d 天，是否重新获取？(y/N): "
 MESSAGES[zh_err_root]="错误：请以 root 用户运行此脚本！"
 MESSAGES[zh_err_domain]="错误：无效的域名格式或解析不正确！"
-MESSAGES[zh_err_ssl]="错误：OpenSSL 未安装或 CA 证书有问题！"
+MESSAGES[zh_err_ssl]="错误：OpenSSL 或 CA 证书安装失败！"
 MESSAGES[zh_check_deps]="检查并安装依赖项..."
 MESSAGES[zh_update_index]="更新包索引..."
 MESSAGES[zh_install_dep]="安装依赖 %s..."
@@ -81,6 +82,9 @@ MESSAGES[zh_backup_uninstall]="备份并卸载旧版本..."
 MESSAGES[zh_backup_done]="旧配置已备份至: %s"
 MESSAGES[zh_config_firewall]="配置防火墙规则..."
 MESSAGES[zh_check_ssl]="检查 SSL 证书环境..."
+MESSAGES[zh_ssl_ok]="SSL 证书环境有效"
+MESSAGES[zh_ssl_ca_missing]="警告：未找到 CA 证书文件 %s，正在安装..."
+MESSAGES[zh_ssl_ca_invalid]="警告：CA 证书可能无效，正在更新..."
 MESSAGES[zh_download_hy2]="下载 Hysteria2 (%d/%d)..."
 MESSAGES[zh_create_service]="创建服务..."
 MESSAGES[zh_check_health]="检查服务健康状态..."
@@ -100,7 +104,7 @@ MESSAGES[en_confirm_backup]="Backup old version config? (default N)(y/N): "
 MESSAGES[en_confirm_reissue]="Certificate valid, %d days remaining, reissue? (y/N): "
 MESSAGES[en_err_root]="Error: Please run this script as root!"
 MESSAGES[en_err_domain]="Error: Invalid domain format or resolution!"
-MESSAGES[en_err_ssl]="Error: OpenSSL not installed or CA certificates issue!"
+MESSAGES[en_err_ssl]="Error: Failed to install OpenSSL or CA certificates!"
 MESSAGES[en_check_deps]="Checking and installing dependencies..."
 MESSAGES[en_update_index]="Updating package index..."
 MESSAGES[en_install_dep]="Installing dependency %s..."
@@ -115,6 +119,9 @@ MESSAGES[en_backup_uninstall]="Backing up and uninstalling old version..."
 MESSAGES[en_backup_done]="Old config backed up to: %s"
 MESSAGES[en_config_firewall]="Configuring firewall rules..."
 MESSAGES[en_check_ssl]="Checking SSL certificate environment..."
+MESSAGES[en_ssl_ok]="SSL certificate environment is valid"
+MESSAGES[en_ssl_ca_missing]="Warning: CA certificate file %s not found, installing..."
+MESSAGES[en_ssl_ca_invalid]="Warning: CA certificate may be invalid, updating..."
 MESSAGES[en_download_hy2]="Downloading Hysteria2 (%d/%d)..."
 MESSAGES[en_create_service]="Creating service..."
 MESSAGES[en_check_health]="Checking service health..."
@@ -133,14 +140,22 @@ check_root() {
   [[ $EUID -ne 0 ]] && { log "$(get_msg err_root)" "$RED"; exit 1; }
 }
 
+# 更新包索引（全局执行一次）
+update_package_index() {
+  if ! $APT_UPDATED; then
+    log "$(get_msg update_index)"
+    timeout 30 apt update &>/dev/null || log "Warning: Failed to update package index, possible network issue" "$YELLOW"
+    APT_UPDATED=true
+  fi
+}
+
 # 检查并安装依赖项
 check_dependencies() {
   local required_deps=("curl" "wget" "jq" "iptables" "dnsutils" "uuid-runtime")
   local optional_deps=("ip6tables" "netfilter-persistent")
   log "$(get_msg check_deps)"
 
-  log "$(get_msg update_index)"
-  timeout 30 apt update &>/dev/null || log "Warning: Failed to update package index, possible network issue" "$YELLOW"
+  update_package_index
 
   for dep in "${required_deps[@]}"; do
     if ! dpkg -s "$dep" &>/dev/null; then
@@ -217,12 +232,12 @@ check_existing_hysteria() {
         log "$(get_msg backup_uninstall)"
         mkdir -p "$BACKUP_DIR"
         local backup_file="$BACKUP_DIR/hysteria_backup_$(date '+%Y%m%d%H%M%S').tar.gz"
-        tar -czf "$backup_file" /usr/local/bin/hysteria "$CONFIG_DIR" /etc/systemd/system/hysteria2.service 2>/dev/null
+        tar -czf "$backup_file" /usr/local/bin/hysteria "$CONFIG_DIR" /etc/systemd/system/hysteria.service 2>/dev/null
         log "$(get_msg backup_done "$backup_file")" "$GREEN"
       fi
       systemctl stop hysteria &>/dev/null || true
       systemctl disable hysteria &>/dev/null || true
-      rm -f /usr/local/bin/hysteria /etc/systemd/system/hysteria2.service
+      rm -f /usr/local/bin/hysteria /etc/systemd/system/hysteria.service
       rm -rf "$CONFIG_DIR"
     else
       log "Canceled installation"
@@ -268,16 +283,32 @@ manage_firewall_rules() {
   [[ -z "$interface" ]] && { log "Error: Cannot detect network interface!" "$RED"; exit 1; }
 
   log "$(get_msg config_firewall)"
-  iptables -t nat -F PREROUTING &>/dev/null
-  iptables -F INPUT &>/dev/null
-  ip6tables -t nat -F PREROUTING &>/dev/null 2>/dev/null || true
-  ip6tables -F INPUT &>/dev/null 2>/dev/null || true
+
+  iptables -t nat -L PREROUTING -n --line-numbers | grep -E "udp.*$port_range" | awk '{print $1}' | sort -r | while read line; do
+    iptables -t nat -D PREROUTING "$line" &>/dev/null
+  done
+  iptables -L INPUT -n --line-numbers | grep -E "udp.*multiport.*$port_range" | awk '{print $1}' | sort -r | while read line; do
+    iptables -D INPUT "$line" &>/dev/null
+  done
+  if command -v ip6tables &>/dev/null && ip -6 route list | grep -q "default"; then
+    ip6tables -t nat -L PREROUTING -n --line-numbers | grep -E "udp.*$port_range" | awk '{print $1}' | sort -r | while read line; do
+      ip6tables -t nat -D PREROUTING "$line" &>/dev/null
+    done
+    ip6tables -L INPUT -n --line-numbers | grep -E "udp.*multiport.*$port_range" | awk '{print $1}' | sort -r | while read line; do
+      ip6tables -D INPUT "$line" &>/dev/null
+    done
+  fi
 
   iptables -t nat -A PREROUTING -i "$interface" -p udp --dport "$port_range" -j REDIRECT --to-ports "$main_port"
   iptables -A INPUT -p udp -m multiport --dports "$port_range" -j ACCEPT
   if command -v ip6tables &>/dev/null && ip -6 route list | grep -q "default"; then
     ip6tables -t nat -A PREROUTING -i "$interface" -p udp --dport "$port_range" -j REDIRECT --to-ports "$main_port"
     ip6tables -A INPUT -p udp -m multiport --dports "$port_range" -j ACCEPT
+  fi
+
+  if ! iptables -C INPUT -p tcp --dport 22 -j ACCEPT &>/dev/null; then
+    iptables -A INPUT -p tcp --dport 22 -j ACCEPT
+    log "Added SSH rule (TCP 22) to INPUT chain" "$GREEN"
   fi
 
   mkdir -p /etc/iptables
@@ -340,27 +371,53 @@ issue_certificate() {
   "$ACME_SH" --installcert -d "$domain" --cert-file "$cert_path" --key-file "$key_path" --force || { log "Error: Failed to install certificate!" "$RED"; exit 1; }
 }
 
-# 检查 SSL 证书路径或相关文件是否有问题
+# 检查 SSL 证书环境（改进版）
 check_ssl_certificates() {
   log "$(get_msg check_ssl)"
+
+  # 检查 OpenSSL
   if ! command -v openssl &>/dev/null; then
     log "Error: OpenSSL not detected, installing..." "$RED"
-    apt update && apt install -y openssl &>/dev/null || { log "$(get_msg err_ssl)" "$RED"; exit 1; }
+    update_package_index
+    timeout 60 apt install -y openssl &>/dev/null || { log "$(get_msg err_ssl)" "$RED"; exit 1; }
     log "OpenSSL installed" "$GREEN"
   fi
 
-  local ca_file="/etc/ssl/certs/ca-certificates.crt"
-  if [[ -f "$ca_file" ]]; then
-    echo | openssl s_client -connect github.com:443 -CAfile "$ca_file" 2>/dev/null | grep -q 'Verify return code: 0 (ok)'
-    if [[ $? -ne 0 ]]; then
-      log "Warning: CA certificate issue, updating..." "$YELLOW"
-      apt update && apt install -y --reinstall ca-certificates &>/dev/null || { log "Error: Failed to update CA certificates!" "$RED"; exit 1; }
-      log "CA certificates updated" "$GREEN"
+  # 检查 CA 文件（支持多路径）
+  local ca_files=("/etc/ssl/certs/ca-certificates.crt" "/etc/pki/tls/certs/ca-bundle.crt")
+  local ca_file=""
+  for file in "${ca_files[@]}"; do
+    if [[ -f "$file" ]]; then
+      ca_file="$file"
+      break
     fi
-  else
-    log "Error: Missing CA certificate file $ca_file!" "$RED"
-    apt update && apt install -y ca-certificates &>/dev/null || { log "Error: Failed to install CA certificates!" "$RED"; exit 1; }
+  done
+
+  if [[ -z "$ca_file" ]]; then
+    log "$(get_msg ssl_ca_missing "$ca_files[0]")" "$YELLOW"
+    update_package_index
+    timeout 60 apt install -y ca-certificates &>/dev/null || { log "Warning: Failed to install CA certificates, proceeding anyway" "$YELLOW"; return 0; }
     log "CA certificates installed" "$GREEN"
+    ca_file="${ca_files[0]}"  # 假设安装后文件出现在默认路径
+  fi
+
+  # 检查 CA 文件有效性（本地检查）
+  if [[ -f "$ca_file" ]]; then
+    local expiry_date=$(openssl crl2pkcs7 -nocrl -certfile "$ca_file" | openssl pkcs7 -print_certs -noout 2>/dev/null | grep -m 1 "notAfter" | cut -d'=' -f2)
+    if [[ -n "$expiry_date" ]]; then
+      local expiry_ts=$(date -d "$expiry_date" +%s 2>/dev/null)
+      local current_ts=$(date +%s)
+      if [[ $expiry_ts -gt $current_ts ]]; then
+        log "$(get_msg ssl_ok)" "$GREEN"
+      else
+        log "$(get_msg ssl_ca_invalid)" "$YELLOW"
+        update_package_index
+        timeout 60 apt install -y --reinstall ca-certificates &>/dev/null || log "Warning: Failed to update CA certificates, proceeding anyway" "$YELLOW"
+        log "CA certificates updated" "$GREEN"
+      fi
+    else
+      log "Warning: Unable to verify CA certificate validity, assuming valid" "$YELLOW"
+    fi
   fi
 }
 
@@ -417,7 +474,7 @@ EOF
 # 创建并启动 systemd 服务
 setup_service() {
   log "$(get_msg create_service)"
-  cat <<EOF > /etc/systemd/system/hysteria2.service
+  cat <<EOF > /etc/systemd/system/hysteria.service
 [Unit]
 Description=Hysteria2 Service
 After=network.target
