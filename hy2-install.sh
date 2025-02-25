@@ -510,6 +510,16 @@ masquerade:
     url: $masquerade_url
     rewriteHost: true
 speedTest: true
+outbounds:
+  - name: "xray"
+    type: socks5
+    socks5:
+      addr: 127.0.0.1:1080
+      username: 123456 
+      password: 123456
+acl:
+  inline:
+    - xray(all)
 EOF
 }
 
