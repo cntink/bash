@@ -395,7 +395,7 @@ issue_certificate() {
       ;;
     2)
       read -p "Cloudflare API Key: " cf_key
-      read -s -p "Cloudflare Email: " cf_email; echo
+      read -p "Cloudflare Email: " cf_email; echo
       export CF_Key="$cf_key" CF_Email="$cf_email"
       "$ACME_SH" --issue --dns dns_cf -d "$domain" -m "$email" --force || { log "Error: Failed to issue certificate via Cloudflare!" "$RED"; exit 1; }
       unset CF_Key CF_Email
