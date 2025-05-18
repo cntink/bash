@@ -72,9 +72,9 @@ check_disk_space() {
   local required_space=100
   local available_space=$(df -m / | tail -1 | awk '{print $4}')
   if [[ "$available_space" -lt "$required_space" ]]; then
-    log "Error: Insufficient disk space ($available_space MB available, $required_space MB required) / 错误：磁盘空间不足 ($available_space MB 可用，需 $required_space MB)" "$RED"
+    log "Error: Insufficient disk space \($available_space MB available, $required_space MB required\) / 错误：磁盘空间不足 \($available_space MB 可用，需 $required_space MB\)" "$RED"
     exit 1
-  fi, exit 1
+  fi
 }
 
 # 语言选择函数
