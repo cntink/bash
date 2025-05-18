@@ -1,4 +1,3 @@
-```bash
 #!/bin/bash
 
 # 脚本名称: hy2-install.sh
@@ -806,4 +805,3 @@ main() {
 # 捕获中断信号
 trap 'log "脚本中断，正在回滚... / Script interrupted, rolling back..." "$YELLOW"; rollback_firewall_rules; exit 1' INT TERM
 main
-```
