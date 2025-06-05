@@ -1,11 +1,5 @@
 #!/bin/bash
 
-# 脚本名称: hy2-install.sh
-# 描述: 安装和配置 Hysteria2 的 Bash 脚本，支持多语言和证书管理
-# 注意: 中国大陆用户可能因网络限制下载旧版本，建议使用镜像或代理：
-#   镜像示例: curl -Ls https://ghproxy.com/https://raw.githubusercontent.com/cntink/bash/main/hy2-install.sh
-#   运行前清理编码: dos2unix hy2-install.sh; sed -i 's/\r$//' hy2-install.sh
-
 # 定义颜色变量用于终端输出
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -25,33 +19,17 @@ APT_UPDATED=false
 CONFIG_FILE="$CONFIG_DIR/config.yaml"
 SERVICE_NAME="hysteria"
 SYSTEMD_SERVICE="/etc/systemd/system/$SERVICE_NAME.service"
-PKG_MANAGER=""
-FIREWALL_BACKUP="/etc/iptables/rules.v4.backup"
-FIREWALL_BACKUP_V6="/etc/iptables/rules.v6.backup"
 
 # 检查是否以 root 用户运行
 check_root() {
-  [[ $EUID -ne 0 ]] && { echo -e "${RED}错误：请以 root 用户运行此脚本！${NC}"; exit 1; }
-}
-
-# 检测包管理器
-detect_package_manager() {
-  if command -v apt >/dev/null 2>&1; then
-    PKG_MANAGER="apt"
-  elif command -v dnf >/dev/null 2>&1; then
-    PKG_MANAGER="dnf"
-  else
-    log "错误：不支持的包管理器！" "$RED"
-    exit 1
-  fi
-  log "使用包管理器：$PKG_MANAGER"
+  [[ $EUID -ne 0 ]] && { echo -e "${RED}Error: Please run this script as root!${NC}"; exit 1; }
 }
 
 # 初始化日志文件并检查权限
 init_logging() {
   local log_dir=$(dirname "$LOG_FILE")
-  mkdir -p "$log_dir" || { echo -e "${RED}无法创建日志目录 $log_dir${NC}"; exit 1; }
-  touch "$LOG_FILE" 2>/dev/null || { echo -e "${RED}无法创建日志文件 $LOG_FILE${CS}"; exit 1; }
+  mkdir -p "$log_dir" || { echo -e "${RED}Cannot create log directory $log_dir${NC}"; exit 1; }
+  touch "$LOG_FILE" 2>/dev/null || { echo -e "${RED}Cannot create log file $LOG_FILE${NC}"; exit 1; }
   chmod 644 "$LOG_FILE"
 }
 
@@ -61,15 +39,10 @@ log() {
   local color="${2:-$NC}"
   local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
   if [[ -f "$LOG_FILE" && $(stat -c%s "$LOG_FILE") -ge $LOG_MAX_SIZE ]]; then
-    local available_space=$(df -m "$(dirname "$LOG_FILE")" | tail -1 | awk '{print $4}')
-    if [[ "$available_space" -lt 10 ]]; then
-      log "错误：日志轮转磁盘空间不足！" "$RED"
-      exit 1
-    fi
     mv "$LOG_FILE" "${LOG_FILE}.$(date '+%Y%m%d%H%M%S').bak"
     touch "$LOG_FILE"
     chmod 644 "$LOG_FILE"
-    echo "$timestamp - ${YELLOW}日志已轮转${NC}" >> "$LOG_FILE"
+    echo "$timestamp - ${YELLOW}$(get_msg log_rotated)${NC}" >> "$LOG_FILE"
   fi
   echo -e "$timestamp - ${color}${message}${NC}" | tee -a "$LOG_FILE"
 }
@@ -79,7 +52,7 @@ check_disk_space() {
   local required_space=100
   local available_space=$(df -m / | tail -1 | awk '{print $4}')
   if [[ "$available_space" -lt "$required_space" ]]; then
-    log "错误：磁盘空间不足 \($available_space MB 可用，需 $required_space MB\) / Error: Insufficient disk space \($available_space MB available, $required_space MB required\)" "$RED"
+    log "Error: Insufficient disk space ($available_space MB available, $required_space MB required) / 错误：磁盘空间不足 ($available_space MB 可用，需 $required_space MB)" "$RED"
     exit 1
   fi
 }
@@ -87,16 +60,16 @@ check_disk_space() {
 # 语言选择函数
 select_language() {
   clear
-  echo -e "${RED}请选择语言 / Select language:${NC}"
-  echo -e "${GREEN}1) 中文 / Chinese${NC}"
-  echo -e "${GREEN}2) 英文 / English${NC}"
-  read -r -p "输入选项 (1/2) / Enter option (1/2): " lang_choice
+  echo -e "${RED}Select language / 请选择语言:${NC}"
+  echo -e "${GREEN}1) Chinese / 中文${NC}"
+  echo -e "${GREEN}2) English / 英文${NC}"
+  read -p "Enter option (1/2) / 输入选项 (1/2): " lang_choice
   case "$lang_choice" in
     1) SCRIPT_LANG="zh" ;;
     2) SCRIPT_LANG="en" ;;
-    *) SCRIPT_LANG="zh" ; log "无效选项，默认使用中文 / Invalid choice, defaulting to Chinese" "$YELLOW" ;;
+    *) SCRIPT_LANG="zh" ; log "$(get_msg invalid_lang)" "$YELLOW" ;;
   esac
-  log "使用语言 / Using language: $SCRIPT_LANG"
+  log "$(get_msg using_lang): $SCRIPT_LANG"
 }
 
 # 定义语言提示
@@ -109,6 +82,10 @@ MESSAGES[zh_input_range]="端口跳跃范围 (默认 40000-62000): "
 MESSAGES[zh_input_url]="伪装 URL (默认 https://wx.qq.com): "
 MESSAGES[zh_input_pwd]="密码 (默认生成 UUID): "
 MESSAGES[zh_input_hop]="端口跳跃间隔 (秒, 默认 30): "
+MESSAGES[zh_input_proxy_addr]="请输入代理地址 (默认 127.0.0.1:1080): "
+MESSAGES[zh_input_proxy_user]="请输入代理服务器用户名 (默认 cntink): "
+MESSAGES[zh_input_proxy_pass]="请输入代理服务器密码 (默认 cntink): "
+MESSAGES[zh_confirm_split]="是否启用分流？(默认 N)\n${GREEN}y) 是${NC}\n${GREEN}N) 否${NC}\n输入选项 (y/N): "
 MESSAGES[zh_select_cert]="选择证书申请方式:\n${GREEN}1) Standalone${NC}\n${GREEN}2) Cloudflare${NC}\n${GREEN}3) Aliyun${NC}\n选项 (1/2/3): "
 MESSAGES[zh_confirm_uninstall]="检测到已有 Hysteria2，是否卸载旧版本？(默认 Y)\n${GREEN}Y) 是${NC}\n${GREEN}n) 否${NC}\n输入选项 (Y/n): "
 MESSAGES[zh_confirm_backup]="是否备份旧版本配置？(默认 N)\n${GREEN}y) 是${NC}\n${GREEN}N) 否${NC}\n输入选项 (y/N): "
@@ -150,7 +127,6 @@ MESSAGES[zh_service_config]="Hysteria2 服务配置信息:"
 MESSAGES[zh_continue_prompt]="按回车继续管理，或输入 q 退出: "
 MESSAGES[zh_input_option]="输入选项 (1/2): "
 MESSAGES[zh_input_manage_option]="输入选项 (1-7): "
-MESSAGES[zh_err_config]="错误：Hysteria2 配置文件无效！"
 # 英文提示
 MESSAGES[en_input_domain]="Please enter the domain: "
 MESSAGES[en_input_email]="Email for certificate application (default auto-generated): "
@@ -159,6 +135,10 @@ MESSAGES[en_input_range]="Port hopping range (default 40000-62000): "
 MESSAGES[en_input_url]="Masquerade URL (default https://wx.qq.com): "
 MESSAGES[en_input_pwd]="Password (default UUID generated): "
 MESSAGES[en_input_hop]="Port hopping interval (seconds, default 30): "
+MESSAGES[en_input_proxy_addr]="Please enter the proxy address (default 127.0.0.1:1080): "
+MESSAGES[en_input_proxy_user]="Please enter the proxy server username (default cntink): "
+MESSAGES[en_input_proxy_pass]="Please enter the proxy server password (default cntink): "
+MESSAGES[en_confirm_split]="Enable traffic splitting? (default N)\n${GREEN}y) Yes${NC}\n${GREEN}N) No${NC}\nEnter option (y/N): "
 MESSAGES[en_select_cert]="Select certificate issuance method:\n${GREEN}1) Standalone${NC}\n${GREEN}2) Cloudflare${NC}\n${GREEN}3) Aliyun${NC}\nOption (1/2/3): "
 MESSAGES[en_confirm_uninstall]="Existing Hysteria2 detected, uninstall old version? (default Y)\n${GREEN}Y) Yes${NC}\n${GREEN}n) No${NC}\nEnter option (Y/n): "
 MESSAGES[en_confirm_backup]="Backup old version config? (default N)\n${GREEN}y) Yes${NC}\n${GREEN}N) No${NC}\nEnter option (y/N): "
@@ -200,7 +180,6 @@ MESSAGES[en_service_config]="Hysteria2 service configuration info:"
 MESSAGES[en_continue_prompt]="Press Enter to continue managing, or enter 'q' to quit: "
 MESSAGES[en_input_option]="Enter option (1/2): "
 MESSAGES[en_input_manage_option]="Enter option (1-7): "
-MESSAGES[en_err_config]="Error: Invalid Hysteria2 configuration file!"
 
 # 获取语言特定消息
 get_msg() {
@@ -213,7 +192,7 @@ get_msg() {
 update_package_index() {
   if ! $APT_UPDATED; then
     log "$(get_msg update_index)"
-    timeout 300 $PKG_MANAGER update &>/dev/null || log "警告：更新包索引失败，可能网络问题 / Warning: Failed to update package index, possible network issue" "$YELLOW"
+    timeout 300 apt update &>/dev/null || log "Warning: Failed to update package index, possible network issue / 警告：更新包索引失败，可能网络问题" "$YELLOW"
     APT_UPDATED=true
   fi
 }
@@ -229,29 +208,26 @@ check_dependencies() {
   for dep in "${required_deps[@]}"; do
     if ! dpkg -s "$dep" &>/dev/null; then
       log "$(get_msg install_dep "$dep")"
-      timeout 300 $PKG_MANAGER install -y "$dep" >"$LOG_FILE.install.log" 2>&1 || {
-        log "$(get_msg err_install "$dep" "$(cat "$LOG_FILE.install.log")")" "$RED"
-        $PKG_MANAGER --fix-broken install -y &>/dev/null || log "警告：尝试修复损坏的包失败 / Warning: Attempt to fix broken packages failed" "$YELLOW"
-        rm -f "$LOG_FILE.install.log"
+      timeout 300 apt install -y "$dep" &>/dev/null || {
+        log "$(get_msg err_install "$dep" "$(apt install -y "$dep" 2>&1)")" "$RED"
         exit 1
       }
-      rm -f "$LOG_FILE.install.log"
     fi
   done
 
   for dep in "${optional_deps[@]}"; do
     if ! dpkg -s "$dep" &>/dev/null; then
       log "$(get_msg install_opt_dep "$dep")"
-      timeout 300 $PKG_MANAGER install -y "$dep" &>/dev/null || log "$(get_msg warn_install "$dep")" "$YELLOW"
+      timeout 300 apt install -y "$dep" &>/dev/null || log "$(get_msg warn_install "$dep")" "$YELLOW"
     fi
   done
   log "$(get_msg deps_done)"
 }
 
-# 获取用户输入的域名并验证
+# 获取用户输入的域名并验证（修复重复提示）
 get_domain() {
   while true; do
-    read -r -p "$(get_msg input_domain)" domain
+    read -p "$(get_msg input_domain)" domain
     if ! validate_domain_format "$domain"; then
       echo -e "${RED}$(get_msg err_domain_format)${NC}"
       log "$(get_msg err_domain_format)" "$RED"
@@ -280,18 +256,11 @@ validate_domain_resolution() {
   local server_ip=$(dig +short "$domain" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | sort -u)
   local local_ip=$(curl -s http://api4.ipify.org/)
   if [[ -z "$server_ip" || -z "$local_ip" ]]; then
-    log "错误：无法解析域名或获取本地 IP / Error: Failed to resolve domain or fetch local IP" "$RED"
     return 1
   fi
-  if ! echo "$server_ip" | grep -qw "$local_ip"; then
-    log "域名 IP ($server_ip) 不匹配本地 IP ($local_ip) / Domain IP ($server_ip) does not match local IP ($local_ip)" "$YELLOW"
-    read -r -p "是否继续？(y/N) / Continue anyway? (y/N): " choice
-    if [[ "$choice" =~ ^[Yy]$ ]]; then
-      log "用户选择继续，尽管 IP 不匹配 / User chose to continue despite IP mismatch" "$GREEN"
-      return 0
-    else
-      return 1
-    fi
+  if ! echo "$server_ip" | grep -q "$local_ip"; then
+    read -p "Continue anyway? (y/N) / 是否继续？(y/N): " choice
+    [[ "$choice" =~ ^[Yy]$ ]] || return 1
   fi
   return 0
 }
@@ -299,55 +268,32 @@ validate_domain_resolution() {
 # 获取用户邮箱
 get_email() {
   local domain="$1"
-  read -r -p "$(get_msg input_email)" email
+  read -p "$(get_msg input_email)" email
   email=${email:-"admin@$domain"}
-  log "使用邮箱 / Using email: $email"
+  log "Using email / 使用邮箱: $email"
   echo "$email"
 }
 
 # 安装 acme.sh
 install_acme_sh() {
   [[ -f "$ACME_SH" ]] && return 0
-  log "安装 acme.sh / Installing acme.sh..."
+  log "Installing acme.sh / 安装 acme.sh..."
   curl https://get.acme.sh | sh || {
-    log "错误：安装 acme.sh 失败！ / Error: Failed to install acme.sh!" "$RED"
-    rm -rf "$HOME/.acme.sh" || log "警告：无法清理 acme.sh 目录 / Warning: Failed to clean up acme.sh directory" "$YELLOW"
+    log "Error: Failed to install acme.sh! / 错误：安装 acme.sh 失败！" "$RED"
+    rm -rf "$HOME/.acme.sh"
     exit 1
   }
-}
-
-# 检查并备份现有防火墙规则
-backup_firewall_rules() {
-  log "备份防火墙规则 / Backing up firewall rules..."
-  mkdir -p "$(dirname "$FIREWALL_BACKUP")"
-  iptables-save > "$FIREWALL_BACKUP" || log "警告：无法备份 iptables 规则 / Warning: Failed to backup iptables rules" "$YELLOW"
-  if command -v ip6tables &>/dev/null; then
-    ip6tables-save > "$FIREWALL_BACKUP_V6" || log "警告：无法备份 ip6tables 规则 / Warning: Failed to backup ip6tables rules" "$YELLOW"
-  fi
-}
-
-# 回滚防火墙规则
-rollback_firewall_rules() {
-  log "恢复防火墙规则 / Rolling back firewall rules..."
-  if [[ -f "$FIREWALL_BACKUP" ]]; then
-    iptables-restore < "$FIREWALL_BACKUP" || log "警告：无法恢复 iptables 规则 / Warning: Failed to restore iptables rules" "$YELLOW"
-    rm -f "$FIREWALL_BACKUP"
-  fi
-  if [[ -f "$FIREWALL_BACKUP_V6" ]]; then
-    ip6tables-restore < "$FIREWALL_BACKUP_V6" || log "警告：无法恢复 ip6tables 规则 / Warning: Failed to restore ip6tables rules" "$YELLOW"
-    rm -f "$FIREWALL_BACKUP_V6"
-  fi
 }
 
 # 检查并备份已有 Hysteria2 配置
 check_existing_hysteria() {
   if [[ -f "$SYSTEMD_SERVICE" || -f /usr/local/bin/hysteria || $(systemctl is-active "$SERVICE_NAME" &>/dev/null && echo "active") == "active" ]]; then
     printf "$(get_msg confirm_uninstall)"
-    read -r -p "" confirm_uninstall
+    read -p "" confirm_uninstall
     confirm_uninstall=${confirm_uninstall:-Y}
     if [[ "$confirm_uninstall" =~ ^[Yy]$ ]]; then
       printf "$(get_msg confirm_backup)"
-      read -r -p "" confirm_backup
+      read -p "" confirm_backup
       confirm_backup=${confirm_backup:-N}
       if [[ "$confirm_backup" =~ ^[Yy]$ ]]; then
         log "$(get_msg backup_uninstall)"
@@ -356,28 +302,28 @@ check_existing_hysteria() {
         tar -czf "$backup_file" /usr/local/bin/hysteria "$CONFIG_DIR" "$SYSTEMD_SERVICE" 2>/dev/null
         log "$(get_msg backup_done "$backup_file")" "$GREEN"
       fi
-      systemctl stop "$SERVICE_NAME" &>/dev/null || log "警告：停止服务失败 / Warning: Failed to stop service" "$YELLOW"
-      systemctl disable "$SERVICE_NAME" &>/dev/null || log "警告：禁用服务失败 / Warning: Failed to disable service" "$YELLOW"
-      rm -f /usr/local/bin/hysteria "$SYSTEMD_SERVICE" || log "警告：删除文件失败 / Warning: Failed to remove files" "$YELLOW"
-      rm -rf "$CONFIG_DIR" || log "警告：删除配置目录失败 / Warning: Failed to remove config dir" "$YELLOW"
+      systemctl stop "$SERVICE_NAME" &>/dev/null || log "Warning: Failed to stop service / 警告：停止服务失败" "$YELLOW"
+      systemctl disable "$SERVICE_NAME" &>/dev/null || log "Warning: Failed to disable service / 警告：禁用服务失败" "$YELLOW"
+      rm -f /usr/local/bin/hysteria "$SYSTEMD_SERVICE" || log "Warning: Failed to remove files / 警告：删除文件失败" "$YELLOW"
+      rm -rf "$CONFIG_DIR" || log "Warning: Failed to remove config dir / 警告：删除配置目录失败" "$YELLOW"
       systemctl daemon-reload
-      log "Hysteria2 已卸载 / Hysteria2 uninstalled" "$GREEN"
+      log "Hysteria2 uninstalled / Hysteria2 已卸载" "$GREEN"
     else
-      log "取消安装 / Canceled installation"
+      log "Canceled installation / 取消安装"
       exit 0
     fi
   else
-    log "未检测到已有 Hysteria2 / No existing Hysteria2 detected" "$GREEN"
+    log "No existing Hysteria2 detected / 未检测到已有 Hysteria2" "$GREEN"
   fi
 }
 
 # 获取主端口
 get_main_port() {
-  read -r -p "$(get_msg input_port)" raw_main_port
+  read -p "$(get_msg input_port)" raw_main_port
   main_port=${raw_main_port:-443}
   until [[ "$main_port" =~ ^[0-9]+$ && "$main_port" -ge 1 && "$main_port" -le 65535 ]]; do
-    log "错误：无效端口！必须为 1-65535 / Error: Invalid port! Must be 1-65535" "$RED"
-    read -r -p "$(get_msg input_port)" raw_main_port
+    log "Error: Invalid port! Must be 1-65535 / 错误：无效端口！必须为 1-65535" "$RED"
+    read -p "$(get_msg input_port)" raw_main_port
     main_port=${raw_main_port:-443}
   done
   echo "$main_port"
@@ -385,14 +331,14 @@ get_main_port() {
 
 # 获取端口跳跃范围
 get_port_range() {
-  read -r -p "$(get_msg input_range)" raw_port_range
+  read -p "$(get_msg input_range)" raw_port_range
   raw_port_range=${raw_port_range:-"40000-62000"}
   local formatted=$(echo "$raw_port_range" | sed 's/[-,:]/:/g')
   local start_port=$(echo "$formatted" | cut -d':' -f1)
   local end_port=$(echo "$formatted" | cut -d':' -f2)
   until [[ "$start_port" =~ ^[0-9]+$ && "$end_port" =~ ^[0-9]+$ && "$start_port" -ge 1 && "$end_port" -le 65535 && "$start_port" -le "$end_port" ]]; do
-    log "错误：无效范围！必须为 1-65535 且起始端口 <= 结束端口 / Error: Invalid range! Must be 1-65535 and start <= end" "$RED"
-    read -r -p "$(get_msg input_range)" raw_port_range
+    log "Error: Invalid range! Must be 1-65535 and start <= end / 错误：无效范围！必须为 1-65535 且起始端口 <= 结束端口" "$RED"
+    read -p "$(get_msg input_range)" raw_port_range
     raw_port_range=${raw_port_range:-"40000-62000"}
     formatted=$(echo "$raw_port_range" | sed 's/[-,:]/:/g')
     start_port=$(echo "$formatted" | cut -d':' -f1)
@@ -405,11 +351,9 @@ get_port_range() {
 manage_firewall_rules() {
   local port_range="$1"
   local interface=$(ip -o -4 route show to default | awk '{print $5}')
-  [[ -z "$interface" ]] && { log "错误：无法检测网络接口！ / Error: Cannot detect network interface!" "$RED"; exit 1; }
+  [[ -z "$interface" ]] && { log "Error: Cannot detect network interface! / 错误：无法检测网络接口！" "$RED"; exit 1; }
 
   log "$(get_msg config_firewall)"
-
-  backup_firewall_rules
 
   clear_iptables_rules() {
     local table="$1" chain="$2" proto="$3" ports="$4"
@@ -426,25 +370,23 @@ manage_firewall_rules() {
     clear_iptables_rules "ip6tables" "PREROUTING" "udp" "$port_range"
   fi
 
-  iptables -t nat -A PREROUTING -i "$interface" -p udp --dport "$port_range" -j REDIRECT --to-ports "$main_port" || { log "错误：无法设置 iptables NAT 规则 / Error: Failed to set iptables NAT rule" "$RED"; rollback_firewall_rules; exit 1; }
-  iptables -A INPUT -p udp -m multiport --dports "$port_range" -j ACCEPT || { log "错误：无法设置 iptables INPUT 规则 / Error: Failed to set iptables INPUT rule" "$RED"; rollback_firewall_rules; exit 1; }
+  iptables -t nat -A PREROUTING -i "$interface" -p udp --dport "$port_range" -j REDIRECT --to-ports "$main_port"
+  iptables -A INPUT -p udp -m multiport --dports "$port_range" -j ACCEPT
   if command -v ip6tables &>/dev/null && ip -6 route list | grep -q "default"; then
-    ip6tables -t nat -A PREROUTING -i "$interface" -p udp --dport "$port_range" -j REDIRECT --to-ports "$main_port" || log "警告：无法设置 ip6tables NAT 规则 / Warning: Failed to set ip6tables NAT rule" "$YELLOW"
-    ip6tables -A INPUT -p udp -m multiport --dports "$port_range" -j ACCEPT || log "警告：无法设置 ip6tables INPUT 规则 / Warning: Failed to set ip6tables INPUT rule" "$YELLOW"
+    ip6tables -t nat -A PREROUTING -i "$interface" -p udp --dport "$port_range" -j REDIRECT --to-ports "$main_port"
+    ip6tables -A INPUT -p udp -m multiport --dports "$port_range" -j ACCEPT
   fi
 
   if ! iptables -C INPUT -p tcp --dport 22 -j ACCEPT &>/dev/null; then
     iptables -A INPUT -p tcp --dport 22 -j ACCEPT
-    log "添加 SSH 规则 (TCP 22) 到 INPUT 链 / Added SSH rule (TCP 22) to INPUT chain" "$GREEN"
+    log "Added SSH rule (TCP 22) to INPUT chain / 添加 SSH 规则 (TCP 22) 到 INPUT 链" "$GREEN"
   fi
 
   mkdir -p /etc/iptables
-  iptables-save > /etc/iptables/rules.v4 || { log "错误：无法保存 iptables 规则 / Error: Failed to save iptables rules" "$RED"; rollback_firewall_rules; exit 1; }
-  if command -v ip6tables &>/dev/null; then
-    ip6tables-save > /etc/iptables/rules.v6 || log "警告：无法保存 ip6tables 规则 / Warning: Failed to save ip6tables rules" "$YELLOW"
-  fi
-  systemctl enable netfilter-persistent &>/dev/null || log "警告：无法启用 netfilter-persistent / Warning: Failed to enable netfilter-persistent" "$YELLOW"
-  netfilter-persistent save &>/dev/null || log "警告：保存防火墙规则失败 / Warning: Failed to save firewall rules" "$YELLOW"
+  iptables-save > /etc/iptables/rules.v4
+  ip6tables-save > /etc/iptables/rules.v6 2>/dev/null || true
+  systemctl enable netfilter-persistent &>/dev/null || log "Warning: Failed to enable netfilter-persistent / 警告：无法启用 netfilter-persistent" "$YELLOW"
+  netfilter-persistent save &>/dev/null || log "Warning: Failed to save firewall rules / 警告：保存防火墙规则失败" "$YELLOW"
 }
 
 # 获取并安装 SSL 证书
@@ -454,67 +396,69 @@ issue_certificate() {
   local key_path="$CERT_DIR/$domain/privkey.pem"
 
   if [[ -f "$cert_path" && -f "$key_path" ]]; then
-    local expiry_date=$(openssl x509 -in "$cert_path" -noout -enddate 2>/dev/null | sed 's/notAfter=//')
+    local expiry_date=$(openssl x509 -in "$cert_path" -noout -enddate | sed 's/notAfter=//')
     if [[ -n "$expiry_date" ]]; then
       local expiry_ts=$(date -d "$expiry_date" +%s 2>/dev/null || date --date="$expiry_date" +%s 2>/dev/null)
       local current_ts=$(date +%s)
       if [[ -n "$expiry_ts" && -n "$current_ts" ]]; then
         local days_left=$(( (expiry_ts - current_ts) / 86400 ))
-        log "当前证书剩余 $days_left 天 / Current certificate has $days_left days remaining"
-        read -r -p "$(printf "$(get_msg confirm_reissue)" "$days_left")" reissue
+        log "Current certificate has $days_left days remaining / 当前证书剩余 $days_left 天" "$GREEN"
+        # 确保提示字符串正确格式化
+        local prompt_msg
+        prompt_msg=$(get_msg confirm_reissue "$days_left")
+        read -p "$prompt_msg" reissue
         if [[ "${reissue:-N}" =~ ^[Yy]$ ]]; then
-          log "用户选择重新获取证书 / User chose to reissue certificate"
+          log "User chose to reissue certificate / 用户选择重新获取证书" "$GREEN"
         else
-          log "用户选择保留现有证书 / User chose to keep existing certificate"
+          log "User chose to keep existing certificate / 用户选择保留现有证书" "$GREEN"
           return 0
         fi
       else
         log "$(get_msg err_cert "$cert_path")" "$RED"
-        log "因无法读取到期时间，强制重新颁发 / Forcing certificate reissue due to unreadable expiry date" "$YELLOW"
+        log "Unable to parse certificate validity, will attempt to reissue / 无法解析证书有效期，将尝试重新颁发" "$YELLOW"
       fi
     else
       log "$(get_msg err_cert "$cert_path")" "$RED"
-      log "因证书无效，强制重新颁发 / Forcing certificate reissue due to invalid certificate" "$YELLOW"
+      log "Unable to read certificate expiry, will attempt to reissue / 无法读取证书到期时间，将尝试重新颁发" "$YELLOW"
     fi
   fi
 
-  log "正在颁发证书 / Issuing certificate..."
-  read -r -p "$(get_msg select_cert)" cert_option
+  log "Issuing certificate / 正在颁发证书..." "$BLUE"
+  # 合并提示和输入，避免重复
+  read -p "$(get_msg select_cert)" cert_option
   case "$cert_option" in
     1)
       if lsof -i :80 >/dev/null 2>&1; then
-        log "警告：80 端口被占用，正在释放... / Warning: Port 80 occupied, releasing..." "$YELLOW"
+        log "Warning: Port 80 occupied, releasing... / 警告：80 端口被占用，正在释放..." "$YELLOW"
         systemctl stop nginx &>/dev/null || true
         systemctl stop apache2 &>/dev/null || true
       fi
       iptables -A INPUT -p tcp --dport 80 -j ACCEPT &>/dev/null
-      "$ACME_SH" --issue -d "$domain" --standalone -m "$email" --force || { log "错误：通过 Standalone 颁发证书失败！ / Error: Failed to issue certificate via Standalone!" "$RED"; rollback_firewall_rules; exit 1; }
+      "$ACME_SH" --issue -d "$domain" --standalone -m "$email" --force || { log "Error: Failed to issue certificate via Standalone! / 错误：通过 Standalone 颁发证书失败！" "$RED"; exit 1; }
       iptables -D INPUT -p tcp --dport 80 -j ACCEPT &>/dev/null
       ;;
     2)
-      read -r -p "Cloudflare API Key: " cf_key
-      read -r -p "Cloudflare Email: " cf_email
-      log "捕获 Cloudflare 邮箱: $cf_email / Captured Cloudflare Email: $cf_email" "$GREEN"
+      read -p "Cloudflare API Key: " cf_key
+      read -p "Cloudflare Email: " cf_email
+      log "Captured Cloudflare Email: $cf_email" "$GREEN"
       export CF_Key="$cf_key" CF_Email="$cf_email"
-      "$ACME_SH" --issue --dns dns_cf -d "$domain" -m "$email" --force || { log "错误：通过 Cloudflare 颁发证书失败！ / Error: Failed to issue certificate via Cloudflare!" "$RED"; rollback_firewall_rules; exit 1; }
+      "$ACME_SH" --issue --dns dns_cf -d "$domain" -m "$email" --force || { log "Error: Failed to issue certificate via Cloudflare! / 错误：通过 Cloudflare 颁发证书失败！" "$RED"; exit 1; }
       unset CF_Key CF_Email
       ;;
     3)
-      read -r -p "Aliyun AccessKey ID: " ali_key
-      read -r -s -p "Aliyun AccessKey Secret: " ali_secret; echo
+      read -p "Aliyun AccessKey ID: " ali_key
+      read -s -p "Aliyun AccessKey Secret: " ali_secret; echo
       export Ali_Key="$ali_key" Ali_Secret="$ali_secret"
-      "$ACME_SH" --issue --dns dns_ali -d "$domain" -m "$email" --force || { log "错误：通过 Aliyun 颁发证书失败！ / Error: Failed to issue certificate via Aliyun!" "$RED"; rollback_firewall_rules; exit 1; }
+      "$ACME_SH" --issue --dns dns_ali -d "$domain" -m "$email" --force || { log "Error: Failed to issue certificate via Aliyun! / 错误：通过 Aliyun 颁发证书失败！" "$RED"; exit 1; }
       unset Ali_Key Ali_Secret
       ;;
     *)
-      log "错误：无效选项！ / Error: Invalid option!" "$RED"; rollback_firewall_rules; exit 1
+      log "Error: Invalid option! / 错误：无效选项！" "$RED"; exit 1
       ;;
   esac
 
   mkdir -p "$CERT_DIR/$domain"
-  "$ACME_SH" --installcert -d "$domain" --cert-file "$cert_path" --key-file "$key_path" --force || { log "错误：安装证书失败！ / Error: Failed to install certificate!" "$RED"; rollback_firewall_rules; exit 1; }
-  chmod 600 "$key_path"
-  chmod 644 "$cert_path"
+  "$ACME_SH" --installcert -d "$domain" --cert-file "$cert_path" --key-file "$key_path" --force || { log "Error: Failed to install certificate! / 错误：安装证书失败！" "$RED"; exit 1; }
 }
 
 # 检查 SSL 证书环境
@@ -522,10 +466,10 @@ check_ssl_certificates() {
   log "$(get_msg check_ssl)"
 
   if ! command -v openssl &>/dev/null; then
-    log "错误：未检测到 OpenSSL，正在安装... / Error: OpenSSL not detected, installing..." "$RED"
+    log "Error: OpenSSL not detected, installing... / 错误：未检测到 OpenSSL，正在安装..." "$RED"
     update_package_index
-    timeout 300 $PKG_MANAGER install -y openssl &>/dev/null || { log "$(get_msg err_ssl)" "$RED"; rollback_firewall_rules; exit 1; }
-    log "OpenSSL 已安装 / OpenSSL installed" "$GREEN"
+    timeout 300 apt install -y openssl &>/dev/null || { log "$(get_msg err_ssl)" "$RED"; exit 1; }
+    log "OpenSSL installed / OpenSSL 已安装" "$GREEN"
   fi
 
   local ca_files=("/etc/ssl/certs/ca-certificates.crt" "/etc/pki/tls/certs/ca-bundle.crt")
@@ -540,8 +484,8 @@ check_ssl_certificates() {
   if [[ -z "$ca_file" ]]; then
     log "$(get_msg ssl_ca_missing "$ca_files[0]")" "$YELLOW"
     update_package_index
-    timeout 300 $PKG_MANAGER install -y ca-certificates &>/dev/null || { log "警告：安装 CA 证书失败，继续执行 / Warning: Failed to install CA certificates, proceeding anyway" "$YELLOW"; return 0; }
-    log "CA 证书已安装 / CA certificates installed" "$GREEN"
+    timeout 300 apt install -y ca-certificates &>/dev/null || { log "Warning: Failed to install CA certificates, proceeding anyway / 警告：安装 CA 证书失败，继续执行" "$YELLOW"; return 0; }
+    log "CA certificates installed / CA 证书已安装" "$GREEN"
     ca_file="${ca_files[0]}"
   fi
 
@@ -555,11 +499,11 @@ check_ssl_certificates() {
       else
         log "$(get_msg ssl_ca_invalid)" "$YELLOW"
         update_package_index
-        timeout 300 $PKG_MANAGER install -y --reinstall ca-certificates &>/dev/null || log "警告：更新 CA 证书失败，继续执行 / Warning: Failed to update CA certificates, proceeding anyway" "$YELLOW"
-        log "CA 证书已更新 / CA certificates updated" "$GREEN"
+        timeout 300 apt install -y --reinstall ca-certificates &>/dev/null || log "Warning: Failed to update CA certificates, proceeding anyway / 警告：更新 CA 证书失败，继续执行" "$YELLOW"
+        log "CA certificates updated / CA 证书已更新" "$GREEN"
       fi
     else
-      log "警告：无法验证 CA 证书有效性，假设有效 / Warning: Unable to verify CA certificate validity, assuming valid" "$YELLOW"
+      log "Warning: Unable to verify CA certificate validity, assuming valid / 警告：无法验证 CA 证书有效性，假设有效" "$YELLOW"
     fi
   fi
 }
@@ -570,26 +514,28 @@ install_hysteria() {
   while [[ $retry_count -lt $max_retries ]]; do
     log "$(get_msg download_hy2 "$((retry_count + 1))" "$max_retries")"
     local version=$(curl -sL https://api.github.com/repos/apernet/hysteria/releases/latest | jq -r '.tag_name')
-    [[ -z "$version" ]] && { log "警告：无法获取版本... / Warning: Failed to get version..." "$YELLOW"; retry_count=$((retry_count + 1)); sleep 10; continue; }
+    [[ -z "$version" ]] && { log "Warning: Failed to get version / 警告：无法获取版本..." "$YELLOW"; retry_count=$((retry_count + 1)); sleep 10; continue; }
     local url="https://github.com/apernet/hysteria/releases/download/${version}/hysteria-linux-amd64"
     wget -q "$url" -O /usr/local/bin/hysteria && break
     retry_count=$((retry_count + 1))
     sleep 10
   done
-  [[ $retry_count -eq $max_retries ]] && { log "错误：下载失败！ / Error: Download failed!" "$RED"; rollback_firewall_rules; exit 1; }
+  [[ $retry_count -eq $max_retries ]] && { log "Error: Download failed! / 错误：下载失败！" "$RED"; exit 1; }
   chmod +x /usr/local/bin/hysteria
 }
 
 # 创建 Hysteria2 配置文件
 create_config() {
   local domain="$1" main_port="$2"
-  read -r -p "$(get_msg input_url)" masquerade_url
-  read -r -p "$(get_msg input_pwd)" password
+  read -p "$(get_msg input_url)" masquerade_url
+  read -p "$(get_msg input_pwd)" password
+  read -p "$(get_msg confirm_split)" enable_split
   masquerade_url=${masquerade_url:-"https://wx.qq.com"}
-  password=${password:-$(uuidgen || head -c 16 /dev/urandom | base64 | tr -d '+/')}
-  log "使用伪装 URL / Using masquerade URL: $masquerade_url"
-  log "使用密码 / Using password: $password"
+  password=${password:-$(uuidgen)}
+  log "Using masquerade URL / 使用伪装 URL: $masquerade_url"
+  log "Using password / 使用密码: $password"
 
+  # 基础配置文件
   mkdir -p "$CONFIG_DIR"
   cat <<EOF > "$CONFIG_FILE"
 listen: :$main_port
@@ -613,16 +559,34 @@ masquerade:
     rewriteHost: true
 speedTest: true
 EOF
-  [[ ! -f "$CONFIG_FILE" ]] && { log "错误：无法创建配置文件！ / Error: Failed to create config file!" "$RED"; rollback_firewall_rules; exit 1; }
 
-  # 验证配置文件
-  if /usr/local/bin/hysteria check --config "$CONFIG_FILE" >/dev/null 2>&1; then
-    log "Hysteria2 配置文件验证通过 / Hysteria2 configuration validated" "$GREEN"
+  # 如果用户选择启用分流
+  if [[ "${enable_split:-N}" =~ ^[Yy]$ ]]; then
+    read -p "$(get_msg input_proxy_addr)" proxy_addr
+    read -p "$(get_msg input_proxy_user)" proxy_user
+    read -p "$(get_msg input_proxy_pass)" proxy_pass
+    proxy_addr=${proxy_addr:-"127.0.0.1:1080"}
+    proxy_user=${proxy_user:-"cntink"}
+    proxy_pass=${proxy_pass:-"cntink"}
+    log "Using proxy address / 使用代理地址: $proxy_addr"
+    log "Using proxy username / 使用代理用户名: $proxy_user"
+    log "Using proxy password / 使用代理密码: $proxy_pass"
+
+    # 添加分流配置
+    cat <<EOF >> "$CONFIG_FILE"
+outbounds:
+  - name: "xray"
+    type: socks5
+    socks5:
+      addr: $proxy_addr
+      username: $proxy_user
+      password: $proxy_pass
+EOF
   else
-    log "$(get_msg err_config)" "$RED"
-    rollback_firewall_rules
-    exit 1
+    log "Traffic splitting disabled / 分流未启用" "$GREEN"
   fi
+
+  [[ ! -f "$CONFIG_FILE" ]] && { log "Error: Failed to create config file / 错误：无法创建配置文件！" "$RED"; exit 1; }
 }
 
 # 创建并启动 systemd 服务
@@ -641,7 +605,7 @@ WantedBy=multi-user.target
 EOF
   systemctl daemon-reload
   systemctl enable "$SERVICE_NAME"
-  systemctl start "$SERVICE_NAME" || { log "错误：服务启动失败！ / Error: Service start failed!" "$RED"; rollback_firewall_rules; exit 1; }
+  systemctl start "$SERVICE_NAME" || { log "Error: Service start failed! / 错误：服务启动失败！" "$RED"; exit 1; }
 }
 
 # 健康检查 Hysteria2 服务
@@ -650,8 +614,7 @@ check_health() {
   log "$(get_msg check_health)"
   sleep 2
   if ! systemctl is-active --quiet "$SERVICE_NAME"; then
-    log "错误：服务未运行！ / Error: Service not running!" "$RED"
-    rollback_firewall_rules
+    log "Error: Service not running! / 错误：服务未运行！" "$RED"
     return 1
   fi
   if command -v nc &>/dev/null; then
@@ -659,10 +622,10 @@ check_health() {
     if [[ $? -eq 0 ]]; then
       log "$(get_msg service_ok)" "$GREEN"
     else
-      log "警告：端口 $main_port 未响应，QUIC 可能仍有效，请手动验证 / Warning: Port $main_port not responding via nc, but QUIC may still be active. Please verify manually." "$YELLOW"
+      log "Warning: Port $main_port not responding, QUIC check may be inaccurate / 警告：端口 $main_port 未响应，QUIC 检查可能不准确" "$YELLOW"
     fi
   else
-    log "注意：未安装 NC，跳过端口检查 / Note: NC not installed, skipping port check" "$YELLOW"
+    log "Note: NC not installed, skipping port check / 注意：未安装 NC，跳过端口检查" "$YELLOW"
   fi
   return 0
 }
@@ -670,7 +633,7 @@ check_health() {
 # 生成订阅链接和 Clash 配置
 generate_configs() {
   local domain="$1" main_port="$2" port_range="$3" password="$4"
-  read -r -p "$(get_msg input_hop)" hop_interval
+  read -p "$(get_msg input_hop)" hop_interval
   hop_interval=${hop_interval:-30}
   local hostname=$(hostname -s)
 
@@ -690,10 +653,10 @@ generate_configs() {
 EOF
 )
 
-  log "订阅链接 / Subscription link: $sub_link" "$GREEN"
-  log "Clash 配置 / Clash config:" "$GREEN"
+  log "Subscription link / 订阅链接: $sub_link" "$GREEN"
+  log "Clash config / Clash 配置:" "$GREEN"
   echo "$clash_config"
-  command -v qrencode &>/dev/null && { log "生成二维码 / Generating QR code:" "$GREEN"; echo "$sub_link" | qrencode -t ansiutf8; }
+  command -v qrencode &>/dev/null && { log "Generating QR code / 生成二维码:" "$GREEN"; echo "$sub_link" | qrencode -t ansiutf8; }
 }
 
 # 查看服务状态
@@ -711,13 +674,13 @@ view_service_logs() {
 # 重启服务
 restart_service() {
   log "$(get_msg service_restart)"
-  systemctl restart "$SERVICE_NAME" && log "服务重启成功 / Service restarted successfully" "$GREEN" || log "错误：重启服务失败！ / Error: Failed to restart service!" "$RED"
+  systemctl restart "$SERVICE_NAME" && log "Service restarted successfully / 服务重启成功" "$GREEN" || log "Error: Failed to restart service! / 错误：重启服务失败！" "$RED"
 }
 
 # 停止服务
 stop_service() {
   log "$(get_msg service_stop)"
-  systemctl stop "$SERVICE_NAME" && log "服务停止成功 / Service stopped successfully" "$GREEN" || log "错误：停止服务失败！ / Error: Failed to stop service!" "$RED"
+  systemctl stop "$SERVICE_NAME" && log "Service stopped successfully / 服务停止成功" "$GREEN" || log "Error: Failed to stop service! / 错误：停止服务失败！" "$RED"
 }
 
 # 显示配置信息
@@ -726,7 +689,7 @@ show_config_info() {
   if [[ -f "$CONFIG_FILE" ]]; then
     cat "$CONFIG_FILE"
   else
-    log "错误：配置文件 $CONFIG_FILE 未找到！ / Error: Config file $CONFIG_FILE not found!" "$RED"
+    log "Error: Config file $CONFIG_FILE not found! / 错误：配置文件 $CONFIG_FILE 未找到！" "$RED"
   fi
 }
 
@@ -735,7 +698,7 @@ manage_service() {
   while true; do
     clear
     echo -e "${RED}$(get_msg manage_menu)${NC}"
-    read -r -p "$(get_msg input_manage_option)" choice
+    read -p "$(get_msg input_manage_option)" choice
     case "$choice" in
       1) view_service_status ;;
       2) view_service_logs ;;
@@ -743,10 +706,10 @@ manage_service() {
       4) stop_service ;;
       5) show_config_info ;;
       6) return 0 ;;
-      7) log "退出脚本 / Exiting script" "$GREEN"; exit 0 ;;
-      *) log "无效选项，请选择 1-7 / Invalid option, please choose 1-7" "$YELLOW" ;;
+      7) log "Exiting script / 退出脚本" "$GREEN"; exit 0 ;;
+      *) log "Invalid option, please choose 1-7 / 无效选项，请选择 1-7" "$YELLOW" ;;
     esac
-    read -r -p "$(get_msg continue_prompt)" cont
+    read -p "$(get_msg continue_prompt)" cont
     [[ "$cont" == "q" || "$cont" == "Q" ]] && break
   done
   return 0
@@ -767,7 +730,7 @@ install_hysteria2() {
   install_hysteria
   create_config "$domain" "$main_port"
   setup_service
-  check_health "$domain" "$main_port" || { rollback_firewall_rules; exit 1; }
+  check_health "$domain" "$main_port" || exit 1
   generate_configs "$domain" "$main_port" "$port_range" "$(grep 'password:' "$CONFIG_FILE" | awk '{print $2}')"
 }
 
@@ -776,11 +739,11 @@ main_menu() {
   while true; do
     clear
     echo -e "${RED}$(get_msg service_exists)${NC}"
-    read -r -p "$(get_msg input_option)" action
+    read -p "$(get_msg input_option)" action
     case "$action" in
       1) manage_service ;;
       2) install_hysteria2; break ;;
-      *) log "无效选项，请选择 1-2 / Invalid option, please choose 1-2" "$YELLOW" ;;
+      *) log "Invalid option, please choose 1-2 / 无效选项，请选择 1-2" "$YELLOW" ;;
     esac
   done
 }
@@ -788,7 +751,6 @@ main_menu() {
 # 主逻辑
 main() {
   check_root
-  detect_package_manager
   init_logging
   check_disk_space
   select_language
@@ -803,5 +765,5 @@ main() {
 }
 
 # 捕获中断信号
-trap 'log "脚本中断，正在回滚... / Script interrupted, rolling back..." "$YELLOW"; rollback_firewall_rules; exit 1' INT TERM
+trap 'log "Script interrupted, exiting... / 脚本中断，正在退出..." "$YELLOW"; exit 1' INT TERM
 main
