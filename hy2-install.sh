@@ -31,6 +31,7 @@ init_logging() {
   mkdir -p "$log_dir" || { echo -e "${RED}Cannot create log directory $log_dir${NC}"; exit 1; }
   touch "$LOG_FILE" 2>/dev/null || { echo -e "${RED}Cannot create log file $LOG_FILE${NC}"; exit 1; }
   chmod 644 "$LOG_FILE"
+  chown root:root "$LOG_FILE" 2>/dev/null || log "Warning: Failed to set log file ownership / 警告：无法设置日志文件所有权" "$YELLOW"
 }
 
 # 日志记录函数，支持轮转
@@ -38,11 +39,16 @@ log() {
   local message="$1"
   local color="${2:-$NC}"
   local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-  if [[ -f "$LOG_FILE" && $(stat -c%s "$LOG_FILE") -ge $LOG_MAX_SIZE ]]; then
-    mv "$LOG_FILE" "${LOG_FILE}.$(date '+%Y%m%d%H%M%S').bak"
-    touch "$LOG_FILE"
-    chmod 644 "$LOG_FILE"
-    echo "$timestamp - ${YELLOW}$(get_msg log_rotated)${NC}" >> "$LOG_FILE"
+  if [[ -f "$LOG_FILE" ]]; then
+    local log_date=$(stat -c %Y "$LOG_FILE" 2>/dev/null || echo 0)
+    local current_date=$(date +%s)
+    if [[ $log_date -ne 0 && $(( (current_date - log_date) / 86400 )) -ge 1 || $(stat -c%s "$LOG_FILE") -ge $LOG_MAX_SIZE ]]; then
+      mv "$LOG_FILE" "${LOG_FILE}.$(date '+%Y%m%d%H%M%S').bak"
+      touch "$LOG_FILE"
+      chmod 644 "$LOG_FILE"
+      chown root:root "$LOG_FILE" 2>/dev/null || log "Warning: Failed to set log file ownership / 警告：无法设置日志文件所有权" "$YELLOW"
+      echo "$timestamp - ${YELLOW}$(get_msg log_rotated)${NC}" >> "$LOG_FILE"
+    fi
   fi
   echo -e "$timestamp - ${color}${message}${NC}" | tee -a "$LOG_FILE"
 }
@@ -69,7 +75,7 @@ select_language() {
     2) SCRIPT_LANG="en" ;;
     *) SCRIPT_LANG="zh" ; log "$(get_msg invalid_lang)" "$YELLOW" ;;
   esac
-  log "$(get_msg using_lang): $SCRIPT_LANG"
+  log "$(get_msg using_lang): $SCRIPT_LANG" "$GREEN"
 }
 
 # 定义语言提示
@@ -95,6 +101,7 @@ MESSAGES[zh_err_domain_format]="错误：域名格式无效！"
 MESSAGES[zh_err_domain_resolution]="错误：域名解析失败或与本地 IP 不匹配！"
 MESSAGES[zh_err_ssl]="错误：OpenSSL 或 CA 证书安装失败！"
 MESSAGES[zh_err_cert]="错误：无法解析证书有效期，请检查文件 %s"
+MESSAGES[zh_err_proxy_addr]="错误：代理地址格式无效！必须为 IP:端口"
 MESSAGES[zh_check_deps]="检查并安装依赖项..."
 MESSAGES[zh_update_index]="更新包索引..."
 MESSAGES[zh_install_dep]="安装依赖 %s..."
@@ -148,6 +155,7 @@ MESSAGES[en_err_domain_format]="Error: Invalid domain format!"
 MESSAGES[en_err_domain_resolution]="Error: Domain resolution failed or does not match local IP!"
 MESSAGES[en_err_ssl]="Error: Failed to install OpenSSL or CA certificates!"
 MESSAGES[en_err_cert]="Error: Unable to parse certificate validity, check file %s"
+MESSAGES[en_err_proxy_addr]="Error: Invalid proxy address format! Must be IP:port"
 MESSAGES[en_check_deps]="Checking and installing dependencies..."
 MESSAGES[en_update_index]="Updating package index..."
 MESSAGES[en_install_dep]="Installing dependency %s..."
@@ -191,8 +199,8 @@ get_msg() {
 # 更新包索引
 update_package_index() {
   if ! $APT_UPDATED; then
-    log "$(get_msg update_index)"
-    timeout 300 apt update &>/dev/null || log "Warning: Failed to update package index, possible network issue / 警告：更新包索引失败，可能网络问题" "$YELLOW"
+    log "$(get_msg update_index)" "$BLUE"
+    timeout 300 apt update &>/tmp/apt_update.log || log "Warning: Failed to update package index, details in /tmp/apt_update.log / 警告：更新包索引失败，详情见 /tmp/apt_update.log" "$YELLOW"
     APT_UPDATED=true
   fi
 }
@@ -201,15 +209,15 @@ update_package_index() {
 check_dependencies() {
   local required_deps=("curl" "wget" "jq" "iptables" "dnsutils" "uuid-runtime")
   local optional_deps=("ip6tables" "netfilter-persistent")
-  log "$(get_msg check_deps)"
+  log "$(get_msg check_deps)" "$BLUE"
 
   update_package_index
 
   for dep in "${required_deps[@]}"; do
     if ! dpkg -s "$dep" &>/dev/null; then
-      log "$(get_msg install_dep "$dep")"
-      timeout 300 apt install -y "$dep" &>/dev/null || {
-        log "$(get_msg err_install "$dep" "$(apt install -y "$dep" 2>&1)")" "$RED"
+      log "$(get_msg install_dep "$dep")" "$BLUE"
+      timeout 300 apt install -y "$dep" &>/tmp/apt_install.log || {
+        log "$(get_msg err_install "$dep" "$(cat /tmp/apt_install.log)")" "$RED"
         exit 1
       }
     fi
@@ -217,14 +225,38 @@ check_dependencies() {
 
   for dep in "${optional_deps[@]}"; do
     if ! dpkg -s "$dep" &>/dev/null; then
-      log "$(get_msg install_opt_dep "$dep")"
-      timeout 300 apt install -y "$dep" &>/dev/null || log "$(get_msg warn_install "$dep")" "$YELLOW"
+      log "$(get_msg install_opt_dep "$dep")" "$BLUE"
+      timeout 300 apt install -y "$dep" &>/tmp/apt_install.log || log "$(get_msg warn_install "$dep")" "$YELLOW"
     fi
   done
-  log "$(get_msg deps_done)"
+  log "$(get_msg deps_done)" "$GREEN"
 }
 
-# 获取用户输入的域名并验证（修复重复提示）
+# 验证域名格式
+validate_domain_format() {
+  local domain="$1"
+  [[ "$domain" =~ ^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$ ]] && return 0
+  return 1
+}
+
+# 验证域名解析是否匹配本地公网 IP
+validate_domain_resolution() {
+  local domain="$1"
+  local server_ip=$(dig +short "$domain" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | sort -u)
+  local local_ip=$(curl -s --connect-timeout 10 http://api4.ipify.org/)
+  if [[ -z "$server_ip" || -z "$local_ip" ]]; then
+    log "Error: Failed to resolve domain or fetch local IP / 错误：无法解析域名或获取本地 IP" "$RED"
+    return 1
+  fi
+  if ! echo "$server_ip" | grep -q "$local_ip"; then
+    log "Error: Domain resolves to $server_ip, but local IP is $local_ip / 错误：域名解析为 $server_ip，但本地 IP 为 $local_ip" "$RED"
+    read -p "Continue anyway? (y/N) / 是否继续？(y/N): " choice
+    [[ "$choice" =~ ^[Yy]$ ]] || return 1
+  fi
+  return 0
+}
+
+# 获取用户输入的域名并验证
 get_domain() {
   while true; do
     read -p "$(get_msg input_domain)" domain
@@ -243,43 +275,21 @@ get_domain() {
   done
 }
 
-# 验证域名格式
-validate_domain_format() {
-  local domain="$1"
-  [[ "$domain" =~ ^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$ ]] && return 0
-  return 1
-}
-
-# 验证域名解析是否匹配本地公网 IP
-validate_domain_resolution() {
-  local domain="$1"
-  local server_ip=$(dig +short "$domain" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | sort -u)
-  local local_ip=$(curl -s http://api4.ipify.org/)
-  if [[ -z "$server_ip" || -z "$local_ip" ]]; then
-    return 1
-  fi
-  if ! echo "$server_ip" | grep -q "$local_ip"; then
-    read -p "Continue anyway? (y/N) / 是否继续？(y/N): " choice
-    [[ "$choice" =~ ^[Yy]$ ]] || return 1
-  fi
-  return 0
-}
-
 # 获取用户邮箱
 get_email() {
   local domain="$1"
   read -p "$(get_msg input_email)" email
   email=${email:-"admin@$domain"}
-  log "Using email / 使用邮箱: $email"
+  log "Using email / 使用邮箱: $email" "$GREEN"
   echo "$email"
 }
 
 # 安装 acme.sh
 install_acme_sh() {
   [[ -f "$ACME_SH" ]] && return 0
-  log "Installing acme.sh / 安装 acme.sh..."
-  curl https://get.acme.sh | sh || {
-    log "Error: Failed to install acme.sh! / 错误：安装 acme.sh 失败！" "$RED"
+  log "Installing acme.sh / 安装 acme.sh..." "$BLUE"
+  curl -sL --connect-timeout 10 https://get.acme.sh | sh &>/tmp/acme_install.log || {
+    log "Error: Failed to install acme.sh, details in /tmp/acme_install.log / 错误：安装 acme.sh 失败，详情见 /tmp/acme_install.log" "$RED"
     rm -rf "$HOME/.acme.sh"
     exit 1
   }
@@ -296,11 +306,11 @@ check_existing_hysteria() {
       read -p "" confirm_backup
       confirm_backup=${confirm_backup:-N}
       if [[ "$confirm_backup" =~ ^[Yy]$ ]]; then
-        log "$(get_msg backup_uninstall)"
+        log "$(get_msg backup_uninstall)" "$BLUE"
         mkdir -p "$BACKUP_DIR"
         local backup_file="$BACKUP_DIR/hysteria_backup_$(date '+%Y%m%d%H%M%S').tar.gz"
         tar -czf "$backup_file" /usr/local/bin/hysteria "$CONFIG_DIR" "$SYSTEMD_SERVICE" 2>/dev/null
-        log "$(get_msg backup_done "$backup_file")" "$GREEN"
+        [[ -f "$backup_file" ]] && log "$(get_msg backup_done "$backup_file")" "$GREEN" || { log "Error: Failed to create backup file $backup_file / 错误：无法创建备份文件 $backup_file" "$RED"; exit 1; }
       fi
       systemctl stop "$SERVICE_NAME" &>/dev/null || log "Warning: Failed to stop service / 警告：停止服务失败" "$YELLOW"
       systemctl disable "$SERVICE_NAME" &>/dev/null || log "Warning: Failed to disable service / 警告：禁用服务失败" "$YELLOW"
@@ -309,7 +319,7 @@ check_existing_hysteria() {
       systemctl daemon-reload
       log "Hysteria2 uninstalled / Hysteria2 已卸载" "$GREEN"
     else
-      log "Canceled installation / 取消安装"
+      log "Canceled installation / 取消安装" "$YELLOW"
       exit 0
     fi
   else
@@ -353,7 +363,7 @@ manage_firewall_rules() {
   local interface=$(ip -o -4 route show to default | awk '{print $5}')
   [[ -z "$interface" ]] && { log "Error: Cannot detect network interface! / 错误：无法检测网络接口！" "$RED"; exit 1; }
 
-  log "$(get_msg config_firewall)"
+  log "$(get_msg config_firewall)" "$BLUE"
 
   clear_iptables_rules() {
     local table="$1" chain="$2" proto="$3" ports="$4"
@@ -383,10 +393,12 @@ manage_firewall_rules() {
   fi
 
   mkdir -p /etc/iptables
+  chmod 755 /etc/iptables
   iptables-save > /etc/iptables/rules.v4
   ip6tables-save > /etc/iptables/rules.v6 2>/dev/null || true
   systemctl enable netfilter-persistent &>/dev/null || log "Warning: Failed to enable netfilter-persistent / 警告：无法启用 netfilter-persistent" "$YELLOW"
-  netfilter-persistent save &>/dev/null || log "Warning: Failed to save firewall rules / 警告：保存防火墙规则失败" "$YELLOW"
+  systemctl start netfilter-persistent &>/dev/null || log "Warning: Failed to start netfilter-persistent / 警告：无法启动 netfilter-persistent" "$YELLOW"
+  netfilter-persistent save &>/tmp/netfilter_error.log || log "Warning: Failed to save firewall rules, details in /tmp/netfilter_error.log / 警告：保存防火墙规则失败，详情见 /tmp/netfilter_error.log" "$YELLOW"
 }
 
 # 获取并安装 SSL 证书
@@ -403,14 +415,10 @@ issue_certificate() {
       if [[ -n "$expiry_ts" && -n "$current_ts" ]]; then
         local days_left=$(( (expiry_ts - current_ts) / 86400 ))
         log "Current certificate has $days_left days remaining / 当前证书剩余 $days_left 天" "$GREEN"
-        # 确保提示字符串正确格式化
-        local prompt_msg
-        prompt_msg=$(get_msg confirm_reissue "$days_left")
-        read -p "$prompt_msg" reissue
-        if [[ "${reissue:-N}" =~ ^[Yy]$ ]]; then
-          log "User chose to reissue certificate / 用户选择重新获取证书" "$GREEN"
+        if [[ "$days_left" -lt 30 ]]; then
+          log "Certificate has less than 30 days remaining, reissuing automatically / 证书剩余不到 30 天，自动重新获取" "$YELLOW"
         else
-          log "User chose to keep existing certificate / 用户选择保留现有证书" "$GREEN"
+          log "Certificate has $days_left days remaining (>=30), keeping existing certificate / 证书剩余 $days_left 天 (>=30)，保留现有证书" "$GREEN"
           return 0
         fi
       else
@@ -424,7 +432,6 @@ issue_certificate() {
   fi
 
   log "Issuing certificate / 正在颁发证书..." "$BLUE"
-  # 合并提示和输入，避免重复
   read -p "$(get_msg select_cert)" cert_option
   case "$cert_option" in
     1)
@@ -463,12 +470,12 @@ issue_certificate() {
 
 # 检查 SSL 证书环境
 check_ssl_certificates() {
-  log "$(get_msg check_ssl)"
+  log "$(get_msg check_ssl)" "$BLUE"
 
   if ! command -v openssl &>/dev/null; then
     log "Error: OpenSSL not detected, installing... / 错误：未检测到 OpenSSL，正在安装..." "$RED"
     update_package_index
-    timeout 300 apt install -y openssl &>/dev/null || { log "$(get_msg err_ssl)" "$RED"; exit 1; }
+    timeout 300 apt install -y openssl &>/tmp/apt_install.log || { log "$(get_msg err_ssl)" "$RED"; exit 1; }
     log "OpenSSL installed / OpenSSL 已安装" "$GREEN"
   fi
 
@@ -484,7 +491,7 @@ check_ssl_certificates() {
   if [[ -z "$ca_file" ]]; then
     log "$(get_msg ssl_ca_missing "$ca_files[0]")" "$YELLOW"
     update_package_index
-    timeout 300 apt install -y ca-certificates &>/dev/null || { log "Warning: Failed to install CA certificates, proceeding anyway / 警告：安装 CA 证书失败，继续执行" "$YELLOW"; return 0; }
+    timeout 300 apt install -y ca-certificates &>/tmp/apt_install.log || { log "Warning: Failed to install CA certificates, proceeding anyway / 警告：安装 CA 证书失败，继续执行" "$YELLOW"; return 0; }
     log "CA certificates installed / CA 证书已安装" "$GREEN"
     ca_file="${ca_files[0]}"
   fi
@@ -499,7 +506,7 @@ check_ssl_certificates() {
       else
         log "$(get_msg ssl_ca_invalid)" "$YELLOW"
         update_package_index
-        timeout 300 apt install -y --reinstall ca-certificates &>/dev/null || log "Warning: Failed to update CA certificates, proceeding anyway / 警告：更新 CA 证书失败，继续执行" "$YELLOW"
+        timeout 300 apt install -y --reinstall ca-certificates &>/tmp/apt_install.log || log "Warning: Failed to update CA certificates, proceeding anyway / 警告：更新 CA 证书失败，继续执行" "$YELLOW"
         log "CA certificates updated / CA 证书已更新" "$GREEN"
       fi
     else
@@ -512,8 +519,8 @@ check_ssl_certificates() {
 install_hysteria() {
   local max_retries=3 retry_count=0
   while [[ $retry_count -lt $max_retries ]]; do
-    log "$(get_msg download_hy2 "$((retry_count + 1))" "$max_retries")"
-    local version=$(curl -sL https://api.github.com/repos/apernet/hysteria/releases/latest | jq -r '.tag_name')
+    log "$(get_msg download_hy2 "$((retry_count + 1))" "$max_retries")" "$BLUE"
+    local version=$(curl -sL --connect-timeout 10 https://api.github.com/repos/apernet/hysteria/releases/latest | jq -r '.tag_name')
     [[ -z "$version" ]] && { log "Warning: Failed to get version / 警告：无法获取版本..." "$YELLOW"; retry_count=$((retry_count + 1)); sleep 10; continue; }
     local url="https://github.com/apernet/hysteria/releases/download/${version}/hysteria-linux-amd64"
     wget -q "$url" -O /usr/local/bin/hysteria && break
@@ -524,6 +531,13 @@ install_hysteria() {
   chmod +x /usr/local/bin/hysteria
 }
 
+# 验证代理地址格式
+validate_proxy_addr() {
+  local addr="$1"
+  [[ "$addr" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+$ ]] && return 0
+  return 1
+}
+
 # 创建 Hysteria2 配置文件
 create_config() {
   local domain="$1" main_port="$2"
@@ -532,8 +546,8 @@ create_config() {
   read -p "$(get_msg confirm_split)" enable_split
   masquerade_url=${masquerade_url:-"https://wx.qq.com"}
   password=${password:-$(uuidgen)}
-  log "Using masquerade URL / 使用伪装 URL: $masquerade_url"
-  log "Using password / 使用密码: $password"
+  log "Using masquerade URL / 使用伪装 URL: $masquerade_url" "$GREEN"
+  log "Using password / 使用密码: $password" "$GREEN"
 
   # 基础配置文件
   mkdir -p "$CONFIG_DIR"
@@ -563,14 +577,19 @@ EOF
   # 如果用户选择启用分流
   if [[ "${enable_split:-N}" =~ ^[Yy]$ ]]; then
     read -p "$(get_msg input_proxy_addr)" proxy_addr
+    proxy_addr=${proxy_addr:-"127.0.0.1:1080"}
+    until validate_proxy_addr "$proxy_addr"; do
+      log "$(get_msg err_proxy_addr)" "$RED"
+      read -p "$(get_msg input_proxy_addr)" proxy_addr
+      proxy_addr=${proxy_addr:-"127.0.0.1:1080"}
+    done
     read -p "$(get_msg input_proxy_user)" proxy_user
     read -p "$(get_msg input_proxy_pass)" proxy_pass
-    proxy_addr=${proxy_addr:-"127.0.0.1:1080"}
     proxy_user=${proxy_user:-"cntink"}
     proxy_pass=${proxy_pass:-"cntink"}
-    log "Using proxy address / 使用代理地址: $proxy_addr"
-    log "Using proxy username / 使用代理用户名: $proxy_user"
-    log "Using proxy password / 使用代理密码: $proxy_pass"
+    log "Using proxy address / 使用代理地址: $proxy_addr" "$GREEN"
+    log "Using proxy username / 使用代理用户名: $proxy_user" "$GREEN"
+    log "Using proxy password / 使用代理密码: $proxy_pass" "$GREEN"
 
     # 添加分流配置
     cat <<EOF >> "$CONFIG_FILE"
@@ -591,7 +610,7 @@ EOF
 
 # 创建并启动 systemd 服务
 setup_service() {
-  log "$(get_msg create_service)"
+  log "$(get_msg create_service)" "$BLUE"
   cat <<EOF > "$SYSTEMD_SERVICE"
 [Unit]
 Description=Hysteria2 Service
@@ -610,8 +629,8 @@ EOF
 
 # 健康检查 Hysteria2 服务
 check_health() {
-  local domain="$1" main_port="$2"
-  log "$(get_msg check_health)"
+  local domain="$1" main_port="$2" password="$3"
+  log "$(get_msg check_health)" "$BLUE"
   sleep 2
   if ! systemctl is-active --quiet "$SERVICE_NAME"; then
     log "Error: Service not running! / 错误：服务未运行！" "$RED"
@@ -626,6 +645,9 @@ check_health() {
     fi
   else
     log "Note: NC not installed, skipping port check / 注意：未安装 NC，跳过端口检查" "$YELLOW"
+  fi
+  if command -v curl &>/dev/null; then
+    curl -s --max-time 5 "hysteria2://$password@$domain:$main_port/?insecure=1" >/dev/null && log "Service connectivity confirmed / 服务连接性确认" "$GREEN" || log "Warning: Service connectivity check failed / 警告：服务连接性检查失败" "$YELLOW"
   fi
   return 0
 }
@@ -661,31 +683,31 @@ EOF
 
 # 查看服务状态
 view_service_status() {
-  log "$(get_msg service_status)"
+  log "$(get_msg service_status)" "$BLUE"
   systemctl status "$SERVICE_NAME" --no-pager
 }
 
 # 查看最近 30 条日志
 view_service_logs() {
-  log "$(get_msg service_logs)"
+  log "$(get_msg service_logs)" "$BLUE"
   journalctl -u "$SERVICE_NAME" -n 30 --no-pager
 }
 
 # 重启服务
 restart_service() {
-  log "$(get_msg service_restart)"
+  log "$(get_msg service_restart)" "$BLUE"
   systemctl restart "$SERVICE_NAME" && log "Service restarted successfully / 服务重启成功" "$GREEN" || log "Error: Failed to restart service! / 错误：重启服务失败！" "$RED"
 }
 
 # 停止服务
 stop_service() {
-  log "$(get_msg service_stop)"
+  log "$(get_msg service_stop)" "$BLUE"
   systemctl stop "$SERVICE_NAME" && log "Service stopped successfully / 服务停止成功" "$GREEN" || log "Error: Failed to stop service! / 错误：停止服务失败！" "$RED"
 }
 
 # 显示配置信息
 show_config_info() {
-  log "$(get_msg service_config)"
+  log "$(get_msg service_config)" "$BLUE"
   if [[ -f "$CONFIG_FILE" ]]; then
     cat "$CONFIG_FILE"
   else
@@ -730,7 +752,7 @@ install_hysteria2() {
   install_hysteria
   create_config "$domain" "$main_port"
   setup_service
-  check_health "$domain" "$main_port" || exit 1
+  check_health "$domain" "$main_port" "$(grep 'password:' "$CONFIG_FILE" | awk '{print $2}')" || exit 1
   generate_configs "$domain" "$main_port" "$port_range" "$(grep 'password:' "$CONFIG_FILE" | awk '{print $2}')"
 }
 
