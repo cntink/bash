@@ -585,8 +585,8 @@ EOF
     done
     read -p "$(get_msg input_proxy_user)" proxy_user
     read -p "$(get_msg input_proxy_pass)" proxy_pass
-    proxy_user=${proxy_user:-"cntink"}
-    proxy_pass=${proxy_pass:-"cntink"}
+    proxy_user=${proxy_user:-"123456"}
+    proxy_pass=${proxy_pass:-"123456"}
     log "Using proxy address / 使用代理地址: $proxy_addr" "$GREEN"
     log "Using proxy username / 使用代理用户名: $proxy_user" "$GREEN"
     log "Using proxy password / 使用代理密码: $proxy_pass" "$GREEN"
@@ -656,7 +656,7 @@ check_health() {
 generate_configs() {
   local domain="$1" main_port="$2" port_range="$3" password="$4"
   read -p "$(get_msg input_hop)" hop_interval
-  hop_interval=${hop_interval:-30}
+  hop_interval=${hop_interval:-300}
   local hostname=$(hostname -s)
 
   local sub_link="hysteria2://$password@$domain:$main_port/?insecure=1&hopPorts=$port_range#[DIY_Hy2]$hostname"
