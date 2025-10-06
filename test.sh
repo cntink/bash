@@ -92,7 +92,7 @@ MESSAGES[zh_confirm_reissue]="现有证书剩余 %d 天，是否重新获取？(
 MESSAGES[zh_err_root]="错误：请以 root 用户运行此脚本！"
 MESSAGES[zh_err_domain_format]="错误：域名格式无效！"
 MESSAGES[zh_err_domain_resolution]="错误：域名解析失败或与本地 IP 不匹配！"
-MESSAGES[zh_err_dig_missing]="警告：dig 命令未找到，请确保 dnsutils 已安装。正在重试..."
+MESSAGES[zh_err_dig_missing]="警告：dig 命令未找到，正在强制安装 dnsutils 并重试..."
 MESSAGES[zh_err_ssl]="错误：OpenSSL 或 CA 证书安装失败！"
 MESSAGES[zh_err_cert]="错误：无法解析证书有效期，请检查文件 %s"
 MESSAGES[zh_err_proxy_addr]="错误：代理地址格式无效！必须为 IP:端口"
@@ -128,7 +128,9 @@ MESSAGES[zh_service_config]="Hysteria2 服务配置信息:"
 MESSAGES[zh_continue_prompt]="按回车继续管理，或输入 q 退出: "
 MESSAGES[zh_input_option]="输入选项 (1/2): "
 MESSAGES[zh_input_manage_option]="输入选项 (1-7): "
-# 英文提示（保持原样，未变更）
+MESSAGES[zh_start_deps]="开始依赖检查..."
+MESSAGES[zh_deps_installed]="核心依赖已安装，包括 dig (dnsutils)"
+# 英文提示（同步添加调试消息）
 MESSAGES[en_input_domain]="Please enter the domain: "
 MESSAGES[en_input_email]="Email for certificate application (default auto-generated): "
 MESSAGES[en_input_port]="Main port (default 443): "
@@ -148,7 +150,7 @@ MESSAGES[en_confirm_reissue]="Current certificate has %d days remaining, reissue
 MESSAGES[en_err_root]="Error: Please run this script as root!"
 MESSAGES[en_err_domain_format]="Error: Invalid domain format!"
 MESSAGES[en_err_domain_resolution]="Error: Domain resolution failed or does not match local IP!"
-MESSAGES[en_err_dig_missing]="Warning: dig command not found, ensure dnsutils is installed. Retrying..."
+MESSAGES[en_err_dig_missing]="Warning: dig command not found, forcing install of dnsutils and retrying..."
 MESSAGES[en_err_ssl]="Error: Failed to install OpenSSL or CA certificates!"
 MESSAGES[en_err_cert]="Error: Unable to parse certificate validity, check file %s"
 MESSAGES[en_err_proxy_addr]="Error: Invalid proxy address format! Must be IP:port"
@@ -184,6 +186,8 @@ MESSAGES[en_service_config]="Hysteria2 service configuration info:"
 MESSAGES[en_continue_prompt]="Press Enter to continue managing, or enter 'q' to quit: "
 MESSAGES[en_input_option]="Enter option (1/2): "
 MESSAGES[en_input_manage_option]="Enter option (1-7): "
+MESSAGES[en_start_deps]="Starting dependency check..."
+MESSAGES[en_deps_installed]="Core dependencies installed, including dig (dnsutils)"
 # 获取语言特定消息
 get_msg() {
   local key="$1"
@@ -198,8 +202,9 @@ update_package_index() {
     APT_UPDATED=true
   fi
 }
-# 检查并安装依赖项
+# 检查并安装依赖项（增强重试）
 check_dependencies() {
+  log "$(get_msg start_deps)" "$BLUE"
   local required_deps=("curl" "wget" "jq" "iptables" "dnsutils" "uuid-runtime")  # dnsutils 提供 dig
   local optional_deps=("ip6tables" "netfilter-persistent")
   log "$(get_msg check_deps)" "$BLUE"
@@ -207,10 +212,15 @@ check_dependencies() {
   for dep in "${required_deps[@]}"; do
     if ! dpkg -s "$dep" &>/dev/null; then
       log "$(get_msg install_dep "$dep")" "$BLUE"
-      timeout 300 apt install -y "$dep" &>/tmp/apt_install.log || {
+      if ! timeout 300 apt install -y "$dep" &>/tmp/apt_install.log; then
         log "$(get_msg err_install "$dep" "$(cat /tmp/apt_install.log)")" "$RED"
-        exit 1
-      }
+        # 重试一次
+        sleep 5
+        apt install -y "$dep" &>/tmp/apt_install_retry.log || {
+          log "Critical: Retry failed for $dep, aborting / 关键：$dep 重试失败，中止" "$RED"
+          exit 1
+        }
+      fi
     fi
   done
   for dep in "${optional_deps[@]}"; do
@@ -219,6 +229,7 @@ check_dependencies() {
       timeout 300 apt install -y "$dep" &>/tmp/apt_install.log || log "$(get_msg warn_install "$dep")" "$YELLOW"
     fi
   done
+  log "$(get_msg deps_installed)" "$GREEN"
   log "$(get_msg deps_done)" "$GREEN"
 }
 # 验证域名格式
@@ -227,13 +238,18 @@ validate_domain_format() {
   [[ "$domain" =~ ^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$ ]] && return 0
   return 1
 }
-# 验证域名解析是否匹配本地公网 IP（添加 dig 检查）
+# 验证域名解析是否匹配本地公网 IP（添加强制 dig 安装）
 validate_domain_resolution() {
   local domain="$1"
-  # 检查 dig 是否可用
+  # 强制检查并安装 dig
   if ! command -v dig &>/dev/null; then
     log "$(get_msg err_dig_missing)" "$YELLOW"
-    return 1
+    update_package_index
+    apt install -y dnsutils &>/tmp/dnsutils_install.log || log "Error: Failed to install dnsutils even after force! / 错误：强制安装 dnsutils 失败！" "$RED"
+    if ! command -v dig &>/dev/null; then
+      log "Critical: dig still unavailable, cannot proceed / 关键：dig 仍不可用，无法继续" "$RED"
+      exit 1
+    fi
   fi
   local server_ip=$(dig +short "$domain" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | sort -u)
   local local_ip=$(curl -s --connect-timeout 10 http://api4.ipify.org/)
@@ -512,7 +528,7 @@ validate_proxy_addr() {
   [[ "$addr" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+$ ]] && return 0
   return 1
 }
-# 创建 Hysteria2 配置文件（集成建议修改：ACME、Salamander obfs、增强 masquerade、sniff、QUIC 优化）
+# 创建 Hysteria2 配置文件（集成建议修改：ACME、Salamander obfs、增强 masquerade、sniff、QUIC 优化，恢复原QUIC窗口）
 create_config() {
   local domain="$1" main_port="$2"
   read -p "$(get_msg input_url)" masquerade_url
@@ -522,10 +538,11 @@ create_config() {
   masquerade_url=${masquerade_url:-"https://wx.qq.com"}
   password=${password:-$(uuidgen)}
   obfs_password=${obfs_password:-$(uuidgen)}
+  local email=$(get_email "$domain")  # 预获取email用于ACME
   log "Using masquerade URL / 使用伪装 URL: $masquerade_url" "$GREEN"
   log "Using password / 使用密码: $password" "$GREEN"
   log "Using obfuscation password / 使用混淆密码: $obfs_password" "$GREEN"
-  # 基础配置文件（使用 ACME 自动证书，添加 obfs、sniff、增强 masquerade）
+  # 基础配置文件
   mkdir -p "$CONFIG_DIR"
   cat <<EOF > "$CONFIG_FILE"
 listen: :$main_port
@@ -534,7 +551,7 @@ listen: :$main_port
 acme:
   domains:
     - $domain
-  email: $(get_email "$domain")
+  email: $email
   ca: letsencrypt
   dir: /etc/hysteria/acme
 
@@ -558,7 +575,7 @@ masquerade:
   listenHTTPS: :$main_port
   forceHTTPS: true
 
-# QUIC 优化
+# QUIC 优化（恢复原配置）
 quic:
   initStreamReceiveWindow: 8388608  # 8MB
   maxStreamReceiveWindow: 16777216  # 16MB
@@ -727,7 +744,7 @@ manage_service() {
   done
   return 0
 }
-# 安装 Hysteria2（移除重复的 check_dependencies 调用）
+# 安装 Hysteria2
 install_hysteria2() {
   local domain=$(get_domain)
   local email=$(get_email "$domain")
@@ -741,8 +758,8 @@ install_hysteria2() {
   install_hysteria
   create_config "$domain" "$main_port"
   setup_service
-  local config_password=$(grep 'password:' "$CONFIG_FILE" | awk '{print $2}' | tr -d '"')
-  local config_obfs_password=$(grep -A 5 'type: salamander' "$CONFIG_FILE" | grep 'password:' | awk '{print $2}' | tr -d '"' || echo "$config_password")  # 精确提取 obfs 密码
+  local config_password=$(grep -A 1 'type: password' "$CONFIG_FILE" | grep password | awk '{print $2}' | tr -d '"')
+  local config_obfs_password=$(grep -A 2 'type: salamander' "$CONFIG_FILE" | grep password | awk '{print $2}' | tr -d '"' || echo "$config_password")
   check_health "$domain" "$main_port" "$config_password" || exit 1
   generate_configs "$domain" "$main_port" "$port_range" "$config_password" "$config_obfs_password"
 }
@@ -759,13 +776,13 @@ main_menu() {
     esac
   done
 }
-# 主逻辑（关键修复：早于输入调用 check_dependencies）
+# 主逻辑（关键修复：依赖检查移至语言选择前）
 main() {
   check_root
   init_logging
   check_disk_space
+  check_dependencies  # 提前执行，确保 dig 在任何输入前可用
   select_language
-  check_dependencies  # 移至此处，确保 dig 等工具在域名验证前可用
   if [[ -f "$SYSTEMD_SERVICE" || -f /usr/local/bin/hysteria || $(systemctl is-active "$SERVICE_NAME" &>/dev/null && echo "active") == "active" ]]; then
     main_menu
   else
