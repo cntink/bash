@@ -23,6 +23,7 @@ H_ENABLE_PORT_HOP="false"
 H_PORT_HOP_RANGE="40000-60000"
 H_ENABLE_SNIFFING="false"
 H_ENABLE_OUTBOUND="false"
+H_INSECURE="false" # V5.35: 添加并初始化 H_INSECURE
 EXISTING_DOMAIN="" # V5.11 用于存储检测到的现有证书域名
 
 # --- 颜色和消息定义 ---
@@ -34,43 +35,43 @@ NC='\033[0m' # No Color
 
 declare -A MESSAGES
 # V5.10 优化后的提示
-MESSAGES[zh_input_domain]="请输入您的域名 (必须解析到此服务器 IP, 默认: %s): " 
-MESSAGES[zh_input_domain_no_default]="请输入您的域名 (必须解析到此服务器 IP): "
-MESSAGES[zh_input_email]="请输入您的邮箱 (用于 ACME 证书, 默认: admin@your_domain): "
-MESSAGES[zh_input_port]="请输入 Hysteria 主监听端口 (默认: 443): "
-MESSAGES[zh_input_password]="请输入连接密码 (留空将自动生成): "
-MESSAGES[zh_confirm_obfs]="是否启用 Salamander 混淆? (强烈推荐, 默认: Y) [Y/n]: "
-MESSAGES[zh_confirm_port_hop]="是否开启端口跳跃功能? (默认: Y) [Y/n]: "
-MESSAGES[zh_input_port_hop_range]="请输入端口跳跃范围 (例如: 40000-60000, 默认: 40000-60000): "
-MESSAGES[zh_input_obfs_password]="请输入混淆密码 (留空将使用默认): "
-MESSAGES[zh_input_masquerade_url]="请输入伪装 URL (默认: https://www.tencent.com): "
-MESSAGES[zh_select_cert_method]="请选择证书获取方式:"
-MESSAGES[zh_cert_method_internal]=" 1) Hysteria 内置 ACME (推荐, 简单)"
-MESSAGES[zh_cert_method_acmesh]=" 2) 使用 acme.sh (支持 DNS API, 功能更强大)"
-MESSAGES[zh_cert_method_existing]=" 3) 使用本地现有证书 (跳过申请)"
-MESSAGES[zh_cert_skip_success]="已选择使用现有证书，跳过申请流程。"
-MESSAGES[zh_err_cert_missing]="错误: 证书文件未找到或不完整。请检查文件夹: %s"
+MESSAGES[input_domain]="请输入您的域名 (必须解析到此服务器 IP, 默认: %s): "
+MESSAGES[input_domain_no_default]="请输入您的域名 (必须解析到此服务器 IP): "
+MESSAGES[input_email]="请输入您的邮箱 (用于 ACME 证书, 默认: admin@your_domain): "
+MESSAGES[input_port]="请输入 Hysteria 主监听端口 (默认: 443): "
+MESSAGES[input_password]="请输入连接密码 (留空将自动生成): "
+MESSAGES[confirm_obfs]="是否启用 Salamander 混淆? (强烈推荐, 默认: Y) [Y/n]: "
+MESSAGES[confirm_port_hop]="是否开启端口跳跃功能? (默认: Y) [Y/n]: "
+MESSAGES[input_port_hop_range]="请输入端口跳跃范围 (例如: 40000-60000, 默认: 40000-60000): "
+MESSAGES[input_obfs_password]="请输入混淆密码 (留空将使用默认): "
+MESSAGES[input_masquerade_url]="请输入伪装 URL (默认: https://www.tencent.com): "
+MESSAGES[select_cert_method]="请选择证书获取方式:"
+MESSAGES[cert_method_internal]=" 1) Hysteria 内置 ACME (推荐, 简单)"
+MESSAGES[cert_method_acmesh]=" 2) 使用 acme.sh (支持 DNS API, 功能更强大)"
+MESSAGES[cert_method_existing]=" 3) 使用本地现有证书 (跳过申请)"
+MESSAGES[cert_skip_success]="已选择使用现有证书，跳过申请流程。"
+MESSAGES[err_cert_missing]="错误: 证书文件未找到或不完整。请检查文件夹: %s"
 
-MESSAGES[zh_manage_menu_title]="Hysteria2 服务管理菜单 (状态: %s)"
-MESSAGES[zh_manage_menu_view_config]=" 1) 查看客户端配置信息 (含二维码)"
-MESSAGES[zh_manage_menu_start]=" 2) 启动服务"
-MESSAGES[zh_manage_menu_restart]=" 3) 重启服务"
-MESSAGES[zh_manage_menu_stop]=" 4) 停止服务"
-MESSAGES[zh_manage_menu_view_log]=" 5) 查看 Hysteria2 运行日志"
-MESSAGES[zh_manage_menu_reinstall]=" 6) 重新安装/更改配置"
-MESSAGES[zh_manage_menu_uninstall]=" 7) 仅卸载 Hysteria2"
-MESSAGES[zh_manage_menu_exit]=" 8) 退出菜单"
+MESSAGES[manage_menu_title]="Hysteria2 服务管理菜单 (状态: %s)"
+MESSAGES[manage_menu_view_config]=" 1) 查看客户端配置信息 (含二维码)"
+MESSAGES[manage_menu_start]=" 2) 启动服务"
+MESSAGES[manage_menu_restart]=" 3) 重启服务"
+MESSAGES[manage_menu_stop]=" 4) 停止服务"
+MESSAGES[manage_menu_view_log]=" 5) 查看 Hysteria2 运行日志"
+MESSAGES[manage_menu_reinstall]=" 6) 重新安装/更改配置"
+MESSAGES[manage_menu_uninstall]=" 7) 仅卸载 Hysteria2"
+MESSAGES[manage_menu_exit]=" 8) 退出菜单"
 
-MESSAGES[zh_uninstall_confirm]="您确定要卸载 Hysteria2 吗? (默认: Y) [y/N]: "
-MESSAGES[zh_uninstall_backup_confirm]="是否备份当前配置文件? (默认: Y) [Y/n]: "
-MESSAGES[zh_uninstall_cert_confirm]="是否保留证书文件夹 (%s) ? (默认: Y) [Y/n]: "
-MESSAGES[zh_uninstall_binary_confirm]="是否保留 Hysteria2 二进制文件 (%s) ? (默认: Y) [Y/n]: "
+MESSAGES[uninstall_confirm]="您确定要卸载 Hysteria2 吗? (默认: Y) [y/N]: "
+MESSAGES[uninstall_backup_confirm]="是否备份当前配置文件? (默认: Y) [Y/n]: "
+MESSAGES[uninstall_cert_confirm]="是否保留证书文件夹 (%s) ? (默认: Y) [Y/n]: "
+MESSAGES[uninstall_binary_confirm]="是否保留 Hysteria2 二进制文件 (%s) ? (默认: Y) [Y/n]: "
 
-MESSAGES[zh_client_config_info]="客户端配置信息"
-MESSAGES[zh_sub_link]="Hysteria2 URI / 链接:"
-MESSAGES[zh_clash_meta_config]="Clash Meta/Verge YAML 配置片段:"
-MESSAGES[zh_install_complete]="Hysteria2 安装配置完成!"
-MESSAGES[zh_backup_path]="配置已备份到: %s"
+MESSAGES[client_config_info]="客户端配置信息"
+MESSAGES[sub_link]="Hysteria2 URI / 链接:"
+MESSAGES[clash_meta_config]="Clash Meta/Verge YAML 配置片段:"
+MESSAGES[install_complete]="Hysteria2 安装配置完成!"
+MESSAGES[backup_path]="配置已备份到: %s"
 
 
 # --- 辅助函数 ---
@@ -80,7 +81,7 @@ log() {
     local level=$1
     local msg=$2
     local color=$3
-    local timestamp=$(date +%Y-%m-%d\ %H:%M:%S)
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     echo -e "${timestamp} [$level] ${color}${msg}${NC}" | tee -a "$LOG_FILE"
 }
 
@@ -109,7 +110,7 @@ validate_port_range() {
 }
 
 get_msg() {
-    local key="zh_$1"
+    local key="$1"
     local msg="${MESSAGES[$key]}"
     if [ -n "$2" ]; then
         printf "$msg" "$2"
@@ -120,19 +121,19 @@ get_msg() {
 
 check_root() {
     if [ "$EUID" -ne 0 ]; then
-        log "请使用 root 用户运行此脚本。" "$RED"
+        log "ERROR" "请使用 root 用户运行此脚本。" "$RED"
         exit 1
     fi
 }
 
 cleanup_exit() {
-    log "脚本执行结束。" "$BLUE"
+    log "INFO" "脚本执行结束。" "$BLUE"
 }
 
 validate_domain() {
     local domain=$1
     if [[ ! "$domain" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
-        log "错误: 域名格式无效 ($domain)。" "$RED"
+        log "ERROR" "域名格式无效 ($domain)。" "$RED"
         exit 1
     fi
 }
@@ -151,36 +152,276 @@ detect_existing_domain() {
     fi
 }
 
-# --- 核心操作函数 - 依赖检查与安装模拟 ---
-
+# --- 核心操作函数 - 依赖检查与安装 ---
+# V5.47: 完善 check_dependencies 函数，实现自动安装缺失依赖
 check_dependencies() {
-    # 检查并安装依赖（略，假设已安装 curl, openssl, iptables-persistent 等）
-    log "正在检查并安装依赖... (略)"
-    sleep 1 # 模拟依赖安装
-    log "依赖安装成功。" "$GREEN"
+    log "INFO" "正在检查并安装依赖..." "$BLUE"
+
+    local deps_missing=0
+    local deps_to_install=()
+
+    # 检查基础工具 (curl, wget, openssl, qrencode)
+    if ! command -v curl >/dev/null 2>&1; then
+        deps_missing=1
+        deps_to_install+=("curl")
+    else
+        log "INFO" "找到 curl。" "$GREEN"
+    fi
+
+    if ! command -v wget >/dev/null 2>&1; then
+        deps_missing=1
+        deps_to_install+=("wget")
+    else
+        log "INFO" "找到 wget。" "$GREEN"
+    fi
+
+    if ! command -v openssl >/dev/null 2>&1; then
+        deps_missing=1
+        deps_to_install+=("openssl")
+    else
+        log "INFO" "找到 openssl。" "$GREEN"
+    fi
+
+    if ! command -v qrencode >/dev/null 2>&1; then
+        deps_missing=1
+        deps_to_install+=("qrencode")
+    else
+        log "INFO" "找到 qrencode。" "$GREEN"
+    fi
+
+    if ! command -v iptables >/dev/null 2>&1; then
+        deps_missing=1
+        deps_to_install+=("iptables")
+    else
+        log "INFO" "找到 iptables。" "$GREEN"
+    fi
+
+    # 检查包管理器并安装缺失的依赖
+    if [ $deps_missing -eq 1 ]; then
+        log "INFO" "检测到以下依赖项缺失: ${deps_to_install[*]}" "$YELLOW"
+
+        if command -v apt >/dev/null 2>&1; then
+            # Debian/Ubuntu
+            log "INFO" "检测到 apt 包管理器，正在更新软件包列表并安装缺失的依赖项..." "$BLUE"
+            if ! apt update; then
+                log "ERROR" "apt update 失败，无法安装依赖项。" "$RED"
+                exit 1
+            fi
+            if ! apt install -y "${deps_to_install[@]}"; then
+                log "ERROR" "安装依赖项失败。" "$RED"
+                exit 1
+            fi
+            log "INFO" "apt 依赖项安装完成。" "$GREEN"
+        elif command -v yum >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1; then
+            # RHEL/CentOS/Fedora
+            local pkg_manager=""
+            if command -v dnf >/dev/null 2>&1; then
+                pkg_manager="dnf"
+            elif command -v yum >/dev/null 2>&1; then
+                pkg_manager="yum"
+            fi
+            log "INFO" "检测到 $pkg_manager 包管理器，正在安装缺失的依赖项..." "$BLUE"
+            if ! $pkg_manager install -y "${deps_to_install[@]}"; then
+                log "ERROR" "安装依赖项失败。" "$RED"
+                exit 1
+            fi
+            log "INFO" "$pkg_manager 依赖项安装完成。" "$GREEN"
+        else
+            log "ERROR" "未找到支持的包管理器 (apt, yum, dnf)，无法自动安装缺失的依赖项: ${deps_to_install[*]}" "$RED"
+            log "INFO" "请手动安装这些依赖项后重试。" "$BLUE"
+            exit 1
+        fi
+    else
+        log "INFO" "所有核心依赖项均已存在。" "$GREEN"
+    fi
+
+    # 检查防火墙规则持久化工具
+    if ! command -v iptables-persistent >/dev/null 2>&1 && ! (command -v iptables-save >/dev/null 2>&1 && command -v iptables-restore >/dev/null 2>&1); then
+        log "WARN" "未找到 iptables-persistent 或 iptables-save/iptables-restore。防火墙规则可能在重启后丢失。" "$YELLOW"
+        log "INFO" "尝试安装防火墙持久化工具..." "$BLUE"
+
+        local persist_pkg=""
+        if command -v apt >/dev/null 2>&1; then
+            persist_pkg="iptables-persistent"
+        elif command -v yum >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1; then
+            persist_pkg="iptables-services"
+        else
+            log "INFO" "无法自动安装防火墙持久化工具，请手动安装相关软件包。" "$BLUE"
+            persist_pkg="" # 标记为不安装
+        fi
+
+        if [ -n "$persist_pkg" ]; then
+            log "INFO" "尝试安装 $persist_pkg..." "$BLUE"
+            if command -v apt >/dev/null 2>&1; then
+                if apt install -y "$persist_pkg"; then
+                    log "INFO" "$persist_pkg 安装成功。" "$GREEN"
+                else
+                    log "WARN" "$persist_pkg 安装失败，防火墙规则重启后可能丢失。" "$YELLOW"
+                fi
+            elif command -v yum >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1; then
+                if $pkg_manager install -y "$persist_pkg"; then
+                    log "INFO" "$persist_pkg 安装成功，防火墙规则将被持久化。" "$GREEN"
+                    # 启用服务 (适用于 iptables-services)
+                    systemctl enable iptables --now 2>/dev/null || true
+                else
+                    log "WARN" "$persist_pkg 安装失败，防火墙规则重启后可能丢失。" "$YELLOW"
+                fi
+            fi
+        fi
+    else
+        if command -v iptables-persistent >/dev/null 2>&1; then
+            log "INFO" "找到 iptables-persistent，防火墙规则将被持久化。" "$GREEN"
+        elif command -v iptables-save >/dev/null 2>&1 && command -v iptables-restore >/dev/null 2>&1; then
+            log "INFO" "找到 iptables-save/iptables-restore，防火墙规则将被持久化。" "$GREEN"
+        fi
+    fi
+
+    log "INFO" "依赖检查与安装完成。" "$GREEN"
 }
 
+# V5.45: 修正 download_and_install 函数以正确下载二进制文件
+# V5.49: 改进二进制文件验证逻辑
 download_and_install() {
-    # 检测架构并下载 Hysteria2 二进制文件（略）
-    log "检测到的系统架构: amd64 (略)" "$BLUE"
+    log "INFO" "检测系统架构并下载 Hysteria2 二进制文件..." "$BLUE"
+
+    # 1. 检测操作系统和架构
+    local OS_NAME
+    local ARCH_NAME
+    OS_NAME=$(uname -s | tr '[:upper:]' '[:lower:]')
+    ARCH_NAME=$(uname -m)
+
+    # 2. 映射架构名称到 Hysteria 发布版的命名
+    case $ARCH_NAME in
+        x86_64|amd64) ARCH_NAME="amd64" ;;
+        aarch64|arm64) ARCH_NAME="arm64" ;;
+        armv7l) ARCH_NAME="arm" ;;
+        i386|i686) ARCH_NAME="386" ;;
+        *) log "ERROR" "不支持的系统架构: $ARCH_NAME" "$RED"; exit 1 ;;
+    esac
+
+    # 3. 构建下载 URL
+    local DOWNLOAD_URL="https://github.com/apernet/hysteria/releases/latest/download/hysteria-${OS_NAME}-${ARCH_NAME}"
+
+    # 4. 检查本地二进制文件
     if [ -f "$BINARY_PATH" ]; then
-        # 实际代码中应有版本检查
-        log "检测到本地二进制文件，跳过下载。" "$YELLOW"
-    else
-        log "正在下载 Hysteria2 二进制文件... (略)"
-        # 模拟下载和安装
-        touch "$BINARY_PATH"
-        chmod +x "$BINARY_PATH"
+        log "INFO" "检测到本地二进制文件: $BINARY_PATH" "$YELLOW"
+        # V5.45: 检查文件是否可执行且非空
+        if [ -x "$BINARY_PATH" ] && [ -s "$BINARY_PATH" ]; then
+            log "INFO" "本地二进制文件存在、非空且可执行，跳过下载。" "$GREEN"
+            # V5.49: 在跳过下载时也进行基本验证
+            if timeout 5s "$BINARY_PATH" --version >/dev/null 2>&1; then
+                log "INFO" "本地二进制文件验证通过 (--version)。" "$GREEN"
+                return 0
+            else
+                log "WARN" "本地二进制文件 $BINARY_PATH 存在但 --version 验证失败，可能已损坏或不兼容，将重新下载。" "$YELLOW"
+                rm -f "$BINARY_PATH" # 删除无效文件
+            fi
+        else
+            log "WARN" "本地二进制文件 $BINARY_PATH 存在但不可执行或为空，将重新下载。" "$YELLOW"
+            rm -f "$BINARY_PATH" # 删除无效文件
+        fi
     fi
+
+    # 5. 下载二进制文件
+    log "INFO" "正在下载 Hysteria2 二进制文件 ($DOWNLOAD_URL) 到 $BINARY_PATH..." "$BLUE"
+    if command -v curl >/dev/null 2>&1; then
+        if ! curl -L "$DOWNLOAD_URL" -o "$BINARY_PATH"; then
+            log "ERROR" "使用 curl 下载失败！" "$RED"
+            exit 1
+        fi
+    elif command -v wget >/dev/null 2>&1; then
+        if ! wget "$DOWNLOAD_URL" -O "$BINARY_PATH"; then
+            log "ERROR" "使用 wget 下载失败！" "$RED"
+            exit 1
+        fi
+    else
+        log "ERROR" "系统中没有找到 curl 或 wget，无法下载 Hysteria2。" "$RED"
+        exit 1
+    fi
+
+    # 6. 设置执行权限
+    chmod +x "$BINARY_PATH"
+
+    # 7. 验证下载的文件
+    if [ ! -f "$BINARY_PATH" ] || [ ! -x "$BINARY_PATH" ] || [ ! -s "$BINARY_PATH" ]; then
+        log "ERROR" "下载的二进制文件 $BINARY_PATH 不存在、不可执行或为空！" "$RED"
+        exit 1
+    fi
+
+    # 8. V5.49: 改进验证逻辑
+    # 首先检查文件类型 (可选，提供更多信息)
+    if command -v file >/dev/null 2>&1; then
+        local file_type
+        file_type=$(file -b "$BINARY_PATH" 2>/dev/null)
+        log "INFO" "下载的二进制文件类型: $file_type" "$BLUE"
+    fi
+
+    # 尝试运行 --help 作为更简单的验证，它通常不涉及网络或复杂初始化
+    if timeout 5s "$BINARY_PATH" --help >/dev/null 2>&1; then
+        log "INFO" "Hysteria2 二进制文件下载并基本验证成功 (--help)。" "$GREEN"
+    else
+        # --help 失败，再尝试 --version
+        if timeout 5s "$BINARY_PATH" --version >/dev/null 2>&1; then
+            log "INFO" "Hysteria2 二进制文件下载并验证成功 (--version)。" "$GREEN"
+        else
+            # 两个命令都失败，检查文件是否为ELF格式 (Linux可执行文件)
+            if command -v file >/dev/null 2>&1 && file "$BINARY_PATH" 2>/dev/null | grep -q "ELF"; then
+                log "WARN" "下载的二进制文件是ELF格式，但 --help 和 --version 均失败。可能存在兼容性问题。" "$YELLOW"
+                # 可以选择在此处退出，或者尝试启动服务（让服务启动失败来最终确认）
+                # 这里我们选择记录警告并继续，因为 --help/--version 失败不一定代表服务无法启动
+                # exit 1 # Uncomment this line if you want to be strict
+            else
+                log "ERROR" "下载的二进制文件 $BINARY_PATH 不是有效的ELF可执行文件或验证失败。" "$RED"
+            fi
+            rm -f "$BINARY_PATH" # 删除无效文件
+            exit 1
+        fi
+    fi
+
+    log "INFO" "Hysteria2 二进制文件下载并验证成功: $BINARY_PATH" "$GREEN"
 }
 # --- 创建服务器配置文件 (移除 RESOLVER 配置，修正 Masquerade 结构) ---
+# V5.51: 修正 Outbound 配置，确保 name 字段存在
+# V5.52: 增加 QUIC 优化、SpeedTest、Sniff 详细配置、Outbound 认证
+# V5.53: 修正变量赋值以去除首尾空格，修正 masquerade 配置格式
+# V5.54: 增加 masquerade 额外设置 (listenHTTP, listenHTTPS, forceHTTPS)，修正 internal_acme 格式
+# V5.55: 移除 alpn 块，修正 password 引号问题，确保 outbounds 认证信息被使用
 create_config_file() {
-    log "正在创建配置文件..." "$BLUE"
+    log "INFO" "正在创建配置文件..." "$BLUE"
 
     # 检查关键变量
     if [ -z "$H_DOMAIN" ] || [ -z "$H_PORT" ] || [ -z "$H_PASSWORD" ]; then
-        log "错误：H_DOMAIN、H_PORT 或 H_PASSWORD 未设置" "$RED" >&2
+        log "ERROR" "错误：H_DOMAIN、H_PORT 或 H_PASSWORD 未设置" "$RED"
         exit 1
+    fi
+
+    # --- V5.52: 添加 QUIC 优化块 ---
+    local QUIC_BLOCK=""
+    if [ "$H_ENABLE_QUIC_OPT" == "true" ]; then
+        QUIC_BLOCK=$(cat << EOF
+quic:
+  initStreamReceiveWindow: 8388608
+  maxStreamReceiveWindow: 16777216
+  initConnReceiveWindow: 16777216
+  maxConnReceiveWindow: 33554432
+  maxIdleTimeout: 30s
+  maxIncomingStreams: 1024
+  disablePathMTUDiscovery: false
+EOF
+)
+    fi
+
+    # --- V5.52: 修正 Sniff 配置块 ---
+    local SNIFF_BLOCK=""
+    if [ "$H_ENABLE_SNIFFING" == "true" ]; then
+        SNIFF_BLOCK=$(cat << EOF
+sniff:
+  enable: true
+  timeout: 2s
+EOF
+)
+    else
+        SNIFF_BLOCK=""
     fi
 
     # Obfuscation 配置
@@ -190,15 +431,21 @@ create_config_file() {
 obfs:
   type: salamander
   salamander:
-    password: "$H_OBFS_PASSWORD"
+    password: $H_OBFS_PASSWORD
 EOF
 )
     fi
 
-    # Masquerade 配置 (修正为 Hysteria 2 官方标准: 仅 url 字段)
+    # Masquerade 配置 (V5.53 & V5.54: 修正格式，增加额外设置)
     local MASQUERADE_BLOCK=$(cat << EOF
 masquerade:
-  url: "$H_MASQUERADE_URL"
+  type: proxy
+  proxy:
+    url: $H_MASQUERADE_URL
+    rewriteHost: true
+  listenHTTP: :80
+  listenHTTPS: :443
+  forceHTTPS: true
 EOF
 )
 
@@ -206,20 +453,22 @@ EOF
     local TLS_CONFIG=""
     if [ "$CERT_METHOD" == "internal_acme" ]; then
         if [ -z "$H_EMAIL" ]; then
-            log "错误：internal_acme 模式需要 H_EMAIL" "$RED" >&2
+            log "ERROR" "错误：internal_acme 模式需要 H_EMAIL" "$RED"
             exit 1
         fi
-        # ACME 模式：使用 acme 块
+        # V5.54: 修正 internal_acme 格式，匹配期望配置
         TLS_CONFIG=$(cat << EOF
 acme:
   domains:
     - $H_DOMAIN
   email: $H_EMAIL
+  ca: letsencrypt
+  dir: $CONFIG_DIR/acme
 EOF
 )
     else # existing 或 acme_sh
         if [ ! -f "$CERT_PATH" ] || [ ! -f "$KEY_PATH" ]; then
-            log "错误：证书文件 $CERT_PATH 或密钥文件 $KEY_PATH 不存在" "$RED" >&2
+            log "ERROR" "错误：证书文件 $CERT_PATH 或密钥文件 $KEY_PATH 不存在" "$RED"
             exit 1
         fi
         # 证书文件模式：使用 tls 块，指定路径
@@ -234,50 +483,51 @@ EOF
     # Resolver 配置 (已移除，使用系统原生解析)
     local RESOLVER_CONFIG=""
 
-    # Sniffing 配置
-    local SNIFFING_BLOCK=""
-    if [ "$H_ENABLE_SNIFFING" == "true" ]; then
-        SNIFFING_BLOCK="trafficSniffing: true"
-    fi
-
     # Outbound 配置
     local OUTBOUND_BLOCK=""
     if [ "$H_ENABLE_OUTBOUND" == "true" ]; then
         OUTBOUND_BLOCK=$(cat << EOF
 outbounds:
-  - type: socks5
+  - name: socks
+    type: socks5
     socks5:
-      addr: 127.0.0.1:1080
-      # 用户可自定义 SOCKS5 地址/端口
+      addr: $H_OUTBOUND_ADDR
+      username: $H_OUTBOUND_USER
+      password: $H_OUTBOUND_PASS
 EOF
 )
+    fi
+
+    # --- V5.52: 添加 SpeedTest 配置 ---
+    local SPEED_TEST_BLOCK=""
+    if [ "$H_ENABLE_SPEED_TEST" == "true" ]; then
+        SPEED_TEST_BLOCK="speedTest: true"
     fi
 
     # 创建配置目录
     mkdir -p "$CONFIG_DIR/certs"
 
-    # 生成完整的配置文件 (关键修正：移除 $RESOLVER_CONFIG 的引用)
+    # 生成完整的配置文件 (关键修正：移除 $RESOLVER_CONFIG 的引用，移除 alpn 块)
     cat > "$CONFIG_FILE" << EOF
 listen: :$H_PORT
 auth:
   type: password
-  password: "$H_PASSWORD"
+  password: $H_PASSWORD
 $TLS_CONFIG
-sni: $H_DOMAIN
-alpn:
-  - h3
 $OBFUSCATION_BLOCK
 $MASQUERADE_BLOCK
+$QUIC_BLOCK
+$SNIFF_BLOCK
 $OUTBOUND_BLOCK
-$( [ "$H_ENABLE_SNIFFING" == "true" ] && echo "$SNIFFING_BLOCK" )
+$SPEED_TEST_BLOCK
 EOF
 
-    log "配置文件 $CONFIG_FILE 创建成功。" "$GREEN"
+    log "INFO" "配置文件 $CONFIG_FILE 创建成功。" "$GREEN"
 }
 
 
 create_systemd_service() {
-    log "正在创建 systemd 服务文件..." "$BLUE"
+    log "INFO" "正在创建 systemd 服务文件..." "$BLUE"
     cat > "$SYSTEMD_SERVICE" << EOF
 [Unit]
 Description=Hysteria2 Service (Server)
@@ -298,7 +548,7 @@ WantedBy=multi-user.target
 EOF
     systemctl daemon-reload
     systemctl enable "$SERVICE_NAME" &>/dev/null
-    log "systemd 服务文件创建成功。" "$GREEN"
+    log "INFO" "systemd 服务文件创建成功。" "$GREEN"
 }
 
 # V5.33 修正：增加防火墙规则清理逻辑
@@ -331,12 +581,12 @@ cleanup_firewall() {
 
 # 卸载服务 (V5.12 修正：恢复保留询问逻辑)
 uninstall_hysteria() {
-    log "正在卸载 Hysteria2 服务..." "$BLUE"
-    
+    log "INFO" "正在卸载 Hysteria2 服务..." "$BLUE"
+
     # 确认卸载
     read -p "$(get_msg 'uninstall_confirm')" confirm; confirm=${confirm:-Y}
     [[ ! "$confirm" =~ ^[yY]$ ]] && { echo "已取消卸载。"; return 1; }
-    
+
     # --- 备份配置 ---
     read -p "$(get_msg 'uninstall_backup_confirm')" backup_confirm; backup_confirm=${backup_confirm:-Y}
     if [[ "$backup_confirm" =~ ^[yY]$ ]]; then
@@ -344,46 +594,46 @@ uninstall_hysteria() {
         local backup_file="$BACKUP_DIR/hysteria_config_backup_$(date +%Y%m%d_%H%M%S).yaml"
         cp "$CONFIG_FILE" "$backup_file" 2>/dev/null && log "$(get_msg 'backup_path' "$backup_file")" "$GREEN"
     fi
-    
+
     # 停止并禁用服务
     systemctl stop "$SERVICE_NAME" 2>/dev/null
     systemctl disable "$SERVICE_NAME" 2>/dev/null
     # V5.16 确保：移除服务文件和快捷命令
     rm -f "$SYSTEMD_SERVICE" "$SHORTCUT_PATH"; systemctl daemon-reload
-    
+
     # --- V5.12 恢复：证书保留询问 ---
     local CERT_DIR="$CONFIG_DIR/certs"
     local keep_cert="N"
     if [ -d "$CERT_DIR" ]; then
         read -p "$(get_msg 'uninstall_cert_confirm' "$CERT_DIR")" keep_cert; keep_cert=${keep_cert:-Y}
     fi
-    
+
     # --- V5.12 恢复：二进制文件保留询问 ---
     read -p "$(get_msg 'uninstall_binary_confirm' "$BINARY_PATH")" keep_binary; keep_binary=${keep_binary:-Y}
 
     # 执行删除操作
     if [[ ! "$keep_binary" =~ ^[yY]$ ]]; then
         rm -f "$BINARY_PATH"
-        log "已删除核心二进制文件: $BINARY_PATH" "$YELLOW"
+        log "INFO" "已删除核心二进制文件: $BINARY_PATH" "$YELLOW"
     else
-        log "已保留核心二进制文件: $BINARY_PATH" "$YELLOW"
+        log "INFO" "已保留核心二进制文件: $BINARY_PATH" "$YELLOW"
     fi
-    
+
     if [[ "$keep_cert" =~ ^[yY]$ ]]; then
         rm -f "$CONFIG_FILE"
-        rm -f "$CONFIG_DIR/.lang" 
-        log "已保留证书文件夹: $CERT_DIR" "$YELLOW"
+        rm -f "$CONFIG_DIR/.lang"
+        log "INFO" "已保留证书文件夹: $CERT_DIR" "$YELLOW"
     else
         rm -rf "$CONFIG_DIR"
-        log "已删除证书文件夹和配置文件。" "$YELLOW"
+        log "INFO" "已删除证书文件夹和配置文件。" "$YELLOW"
     fi
     # ** V5.33 修正：清理防火墙规则 **
-    cleanup_firewall    
-    log "Hysteria2 服务已卸载。 / Hysteria2 has been uninstalled." "$GREEN"
-    
+    cleanup_firewall
+    log "INFO" "Hysteria2 服务已卸载。 / Hysteria2 has been uninstalled." "$GREEN"
+
     # 清理防火墙规则 (略)
-    
-    return 0 
+
+    return 0
 }
 
 # V5.19 最终修正：创建快捷命令函数，确保主脚本文件被复制
@@ -417,44 +667,44 @@ backup_config() {
 
 # 修正后的 configure_firewall 函数
 configure_firewall() {
-    log "配置防火墙以支持端口跳跃..." "$BLUE"
-    
+    log "INFO" "配置防火墙以支持端口跳跃..." "$BLUE"
+
     # 清理旧的 Hysteria 规则 (防止重复添加，但卸载函数已尝试清理)
     # 推荐使用 -I 插入规则，或先检查规则是否存在。这里简化为直接添加。
-    
+
     local TARGET_PORT="$H_PORT"
     local has_changes=0
 
     # 1. 开放主监听端口
-    log "开放 Hysteria 主监听端口: UDP $TARGET_PORT" "$BLUE"
+    log "INFO" "开放 Hysteria 主监听端口: UDP $TARGET_PORT" "$BLUE"
     iptables -A INPUT -p udp --dport "$TARGET_PORT" -j ACCEPT
     if [ $? -eq 0 ]; then has_changes=1; fi
 
     if [ "$H_ENABLE_PORT_HOP" == "true" ] && [ -n "$H_PORT_HOP_RANGE" ]; then
         # 替换 - 为 : 以符合 iptables 格式
         local range=$(echo "$H_PORT_HOP_RANGE" | sed 's/-/:/g')
-        
+
         # 2. 添加 iptables DNAT 规则：将范围端口转发到主端口
-        log "添加端口跳跃 DNAT 规则: UDP $range -> $TARGET_PORT" "$BLUE"
+        log "INFO" "添加端口跳跃 DNAT 规则: UDP $range -> $TARGET_PORT" "$BLUE"
         iptables -t nat -A PREROUTING -p udp --dport "$range" -j DNAT --to-destination :"$TARGET_PORT"
         if [ $? -eq 0 ]; then has_changes=1; fi
 
         # 3. 开放端口跳跃范围
-        log "开放 Hysteria 端口跳跃范围: UDP $range" "$BLUE"
+        log "INFO" "开放 Hysteria 端口跳跃范围: UDP $range" "$BLUE"
         iptables -A INPUT -p udp --dport "$range" -j ACCEPT
         if [ $? -eq 0 ]; then has_changes=1; fi
     fi
-    
+
     if [ "$has_changes" -eq 1 ]; then
         # 4. 保存 iptables 规则
         if command -v iptables-save >/dev/null 2>&1; then
             iptables-save > /etc/iptables/rules.v4 2>/dev/null
-            log "iptables 规则已保存到 /etc/iptables/rules.v4" "$GREEN"
+            log "INFO" "iptables 规则已保存到 /etc/iptables/rules.v4" "$GREEN"
         else
-            log "警告：未找到 iptables-save，规则可能在重启后丢失。请安装 iptables-persistent。" "$YELLOW" >&2
+            log "WARN" "警告：未找到 iptables-save，规则可能在重启后丢失。请安装 iptables-persistent。" "$YELLOW"
         fi
     fi
-    
+
     return 0
 }
 
@@ -466,9 +716,9 @@ generate_client_config() {
     local PORT_PART="$H_PORT"
     local CONFIG_FILE="/etc/hysteria/client_config.yaml"
     local CLI_CONFIG_FILE="/etc/hysteria/client_hysteria2.yaml"
-    
+
     # 移除默认带宽变量 (不再需要)
-    # local DEFAULT_UP="50"  
+    # local DEFAULT_UP="50"
     # local DEFAULT_DOWN="200"
 
     # 检查关键变量，设置默认值（保留原脚本容错逻辑）
@@ -476,19 +726,19 @@ generate_client_config() {
     H_PORT=${H_PORT:-"443"}
     H_PASSWORD=${H_PASSWORD:-"[YOUR_PASSWORD_HERE]"}
     H_MASQUERADE_URL=${H_MASQUERADE_URL:-"https://www.tencent.com"}
-    H_INSECURE=${H_INSECURE:-"true"}
+    # H_INSECURE 在 install_hysteria 中已设置，此处无需默认值
 
     # 变量格式验证（略）
     if ! [[ $H_DOMAIN =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
-        log "错误：H_DOMAIN 格式无效 ($H_DOMAIN)，使用默认值" "$RED" >&2
+        log "ERROR" "错误：H_DOMAIN 格式无效 ($H_DOMAIN)，使用默认值" "$RED"
         H_DOMAIN="[YOUR_DOMAIN_HERE]"
     fi
     if ! [[ $H_PORT =~ ^[0-9]+$ ]] || [ "$H_PORT" -lt 1 ] || [ "$H_PORT" -gt 65535 ]; then
-        log "错误：H_PORT 无效 ($H_PORT)，使用默认值 443" "$RED" >&2
+        log "ERROR" "错误：H_PORT 无效 ($H_PORT)，使用默认值 443" "$RED"
         H_PORT="443"
     fi
     if [ -z "$H_PASSWORD" ]; then
-        log "错误：H_PASSWORD 不能为空，使用默认值" "$RED" >&2
+        log "ERROR" "错误：H_PASSWORD 不能为空，使用默认值" "$RED"
         H_PASSWORD="[YOUR_PASSWORD_HERE]"
     fi
 
@@ -503,10 +753,10 @@ generate_client_config() {
         # 1. 启用混淆
         OBFS_BLOCK=$(printf "    obfs: salamander\n    obfs-password: %s\n" "$H_OBFS_PASSWORD")
         CLI_OBFS_BLOCK=$(printf "obfs:\n  type: salamander\n  salamander:\n    password: %s\n" "$H_OBFS_PASSWORD")
-        log "注意: 检测到混淆启用，端口跳跃功能将被忽略。" "$YELLOW"
-        
+        log "WARN" "注意: 检测到混淆启用，端口跳跃功能将被忽略。" "$YELLOW"
+
         # 强制禁用 URI 中的端口范围
-        H_ENABLE_URI_PORT_RANGE="false" 
+        H_ENABLE_URI_PORT_RANGE="false"
     elif [ "$H_ENABLE_PORT_HOP" == "true" ] && [ -n "$H_PORT_HOP_RANGE" ]; then
         # 2. 仅启用端口跳跃
         PORT_HOP_BLOCK=$(printf "    ports: %s\n" "$H_PORT_HOP_RANGE")
@@ -516,12 +766,12 @@ generate_client_config() {
 
     # --- 1. Hysteria2 URI (链接) 格式 ---
     local QUERY_PARAMS=()
-    
+
     # 混淆参数
     if [ "$H_ENABLE_OBFS" == "true" ] && [ -n "$H_OBFS_PASSWORD" ]; then
         QUERY_PARAMS+=("obfs=salamander" "obfs-password=$H_OBFS_PASSWORD")
     fi
-    
+
     QUERY_PARAMS+=("sni=$H_DOMAIN")
     if [ "$H_INSECURE" == "true" ]; then
         QUERY_PARAMS+=("insecure=1")
@@ -559,9 +809,9 @@ generate_client_config() {
     mkdir -p "$(dirname "$CONFIG_FILE")"
     echo -e "$CLASH_META_CONFIG" > "$CONFIG_FILE"
     if [ $? -eq 0 ]; then
-        log "Clash Meta 配置已保存到 $CONFIG_FILE" "$GREEN"
+        log "INFO" "Clash Meta 配置已保存到 $CONFIG_FILE" "$GREEN"
     else
-        log "错误：无法保存 Clash Meta 配置到 $CONFIG_FILE" "$RED" >&2
+        log "ERROR" "错误：无法保存 Clash Meta 配置到 $CONFIG_FILE" "$RED"
     fi
 
     # --- 3. Hysteria2 CLI YAML 配置 ---
@@ -580,9 +830,9 @@ generate_client_config() {
     mkdir -p "$(dirname "$CLI_CONFIG_FILE")"
     echo -e "$CLI_YAML_CONFIG" > "$CLI_CONFIG_FILE"
     if [ $? -eq 0 ]; then
-        log "Hysteria2 CLI 配置已保存到 $CLI_CONFIG_FILE" "$GREEN"
+        log "INFO" "Hysteria2 CLI 配置已保存到 $CLI_CONFIG_FILE" "$GREEN"
     else
-        log "错误：无法保存 Hysteria2 CLI 配置到 $CLI_CONFIG_FILE" "$RED" >&2
+        log "ERROR" "错误：无法保存 Hysteria2 CLI 配置到 $CLI_CONFIG_FILE" "$RED"
     fi
 
     # --- 4. 生成二维码与格式化输出 ---
@@ -603,11 +853,11 @@ generate_client_config() {
     echo -e " 域名/IP: $H_DOMAIN"
     echo -e " 端口: $PORT_PART"
     echo -e " 密码: $H_PASSWORD"
-    
+
     # 修正输出信息
     local OBFS_INFO=$([ "$H_ENABLE_OBFS" == "true" ] && [ -n "$H_OBFS_PASSWORD" ] && echo "Salamander (密码: $H_OBFS_PASSWORD)" || echo "未启用")
     echo -e " 混淆: $OBFS_INFO"
-    
+
     local HOP_INFO=""
     if [ "$H_ENABLE_OBFS" == "true" ]; then
         HOP_INFO="已禁用 (因混淆启用)"
@@ -617,7 +867,7 @@ generate_client_config() {
         HOP_INFO="未启用"
     fi
     echo -e " 端口跳跃: $HOP_INFO"
-    
+
     echo -e " 伪装 URL: $H_MASQUERADE_URL"
     echo -e "${GREEN}----------------------------------------------${NC}"
     log "$(get_msg 'sub_link')" "$YELLOW"
@@ -632,7 +882,7 @@ generate_client_config() {
         echo -e "$CLASH_META_CONFIG"
         echo -e "提示：Clash Meta 配置已保存到 $CONFIG_FILE，可直接导入 Clash Meta 客户端"
     else
-        log "错误：无法生成 Clash Meta YAML 配置" "$RED" >&2
+        log "ERROR" "错误：无法生成 Clash Meta YAML 配置" "$RED"
     fi
     echo -e "${GREEN}----------------------------------------------${NC}"
     log "Hysteria2 CLI YAML 配置:" "$YELLOW"
@@ -641,7 +891,7 @@ generate_client_config() {
         echo -e "$CLI_YAML_CONFIG"
         echo -e "提示：Hysteria2 CLI 配置已保存到 $CLI_CONFIG_FILE，可用于 CLI 测试"
     else
-        log "错误：无法生成 Hysteria2 CLI YAML 配置" "$RED" >&2
+        log "ERROR" "错误：无法生成 Hysteria2 CLI YAML 配置" "$RED"
     fi
     echo -e "${GREEN}==============================================${NC}"
 
@@ -665,9 +915,10 @@ manage_menu() {
         H_PORT=$(grep 'listen:' "$CONFIG_FILE" | sed 's/listen: ://g' | tr -d '\n\r' || echo "443")
         H_PASSWORD=$(grep -m 1 'password:' "$CONFIG_FILE" | sed 's/password: \"//g;s/\"//g' | tr -d '\n\r' || echo "")
         # 精确读取 masquerade 块下的 url/addr
-        H_MASQUERADE_URL=$(grep 'url:' "$CONFIG_FILE" | sed 's/.*url: //g' | tr -d '\"' | head -n 1 || echo "https://www.tencent.com")
+        # V5.35: 修正 masquerade URL 读取逻辑，适应新格式
+        H_MASQUERADE_URL=$(grep -A 10 'masquerade:' "$CONFIG_FILE" | grep 'url:' | sed 's/.*url: //g' | tr -d '\"' | head -n 1 || echo "https://www.tencent.com")
         if [ -z "$H_MASQUERADE_URL" ]; then
-            H_MASQUERADE_URL=$(grep 'addr:' "$CONFIG_FILE" | sed 's/.*addr: //g' | tr -d '\"' | head -n 1 || echo "https://www.tencent.com")
+            H_MASQUERADE_URL=$(grep -A 10 'masquerade:' "$CONFIG_FILE" | grep 'addr:' "$CONFIG_FILE" | sed 's/.*addr: //g' | tr -d '\"' | head -n 1 || echo "https://www.tencent.com")
         fi
         if grep -q 'salamander:' "$CONFIG_FILE"; then
             H_ENABLE_OBFS="true"
@@ -680,6 +931,17 @@ manage_menu() {
             H_PORT_HOP_RANGE=$(grep 'ports:' "$CONFIG_FILE" | sed 's/ports: //g' | tr -d '\"' | tr -d '\n\r' || echo "")
         else
             H_ENABLE_PORT_HOP="false"; H_PORT_HOP_RANGE=""
+        fi
+        # V5.35: 从配置文件推断 H_INSECURE
+        if grep -q 'acme:' "$CONFIG_FILE" || grep -q 'tls:' "$CONFIG_FILE"; then
+             # 如果配置文件中有 acme 或 tls 块，通常意味着证书有效，H_INSECURE 应为 false
+             # 但更准确的方式是检查证书类型或是否使用了本地证书路径
+             # 这里假设如果使用了本地证书路径，H_INSECURE 为 true
+             if grep -q 'cert:.*pem' "$CONFIG_FILE" && grep -q 'key:.*pem' "$CONFIG_FILE"; then
+                 H_INSECURE="true" # 本地证书，可能需要 insecure
+             else
+                 H_INSECURE="false" # ACME 证书，通常不需要 insecure
+             fi
         fi
     fi
     # 3. 菜单循环
@@ -716,14 +978,21 @@ manage_menu() {
     done
 }
 
-
 # 安装主流程 (V5.11 修正：自动证书选择)
+# V5.11 修正：自动证书选择
+# V5.39: 重新设计 trap 和 rollback_files 逻辑
+# V5.40: 修正 IP 检查和 acme.sh 状态判断
+# V5.41: 修正 acme.sh 跳过申请时的返回码判断逻辑
+# V5.42: 增加证书状态预检查
+# V5.43: 当 acme.sh 报告跳过但文件不存在时，强制重新申请
+# V5.44: 在安装证书前确保目标目录存在
+# V5.50: 修正 existing 证书方法的提示信息
+# V5.52: 添加 QUIC 优化、SpeedTest、Outbound 认证等选项
 install_hysteria() {
-    local rollback_files=()
-    trap 'rollback_install "${rollback_files[@]}"' ERR
-    check_dependencies; rollback_files+=("$BINARY_PATH")
+    # V5.39: 将 trap 和 rollback_files 的管理移到函数内部，但只覆盖关键的、可能失败的步骤组合
+    # 初始步骤（依赖检查、域名检测）失败时直接退出，不走回滚
+    check_dependencies
     detect_existing_domain
-
     local CERT_DIR_BASE="$CONFIG_DIR/certs"
     local NUM_CHOICES=2
     local AUTO_EXISTING_CERT="false"
@@ -737,6 +1006,8 @@ install_hysteria() {
             H_DOMAIN="$EXISTING_DOMAIN"
             log "INFO" "检测到本地证书域名: ${H_DOMAIN}，已自动选择 '使用本地现有证书'。" "$GREEN"
             H_EMAIL=""
+            # V5.35: 对于现有证书，设置 H_INSECURE
+            H_INSECURE="true"
         fi
     fi
     # 2. 如果未自动选择，则显示菜单并手动输入
@@ -752,7 +1023,6 @@ install_hysteria() {
         if [ "$cert_choice" == "2" ]; then CERT_METHOD="acme_sh";
         elif [ "$cert_choice" == "3" ]; then CERT_METHOD="existing";
         else CERT_METHOD="internal_acme"; fi
-
         # 域名输入
         while true; do
             local DEFAULT_DOMAIN="${EXISTING_DOMAIN:-$(hostname -f)}"
@@ -780,18 +1050,204 @@ install_hysteria() {
         if [ "$CERT_METHOD" == "acme_sh" ]; then
             CERT_PATH="$HOME/.acme.sh/$H_DOMAIN/fullchain.cer"
             KEY_PATH="$HOME/.acme.sh/$H_DOMAIN/$H_DOMAIN.key"
+
+            # 若证书不存在 → 自动安装 acme.sh 并申请
             if [ ! -f "$CERT_PATH" ] || [ ! -f "$KEY_PATH" ]; then
-                log "ERROR" "acme.sh 证书文件未找到 ($CERT_PATH, $KEY_PATH)" "$RED"
-                exit 1
+                log "INFO" "正在使用 acme.sh 为 $H_DOMAIN 申请 Let's Encrypt 证书…" "$BLUE"
+
+                # 1. 自动安装 acme.sh（只执行一次）
+                if [ ! -d "$HOME/.acme.sh" ]; then
+                    log "INFO" "未检测到 acme.sh，正在自动安装…" "$BLUE"
+                    # V5.37: 使用官方推荐的安装命令，并检查 curl/wget
+                    local _get_cmd=""
+                    if command -v curl >/dev/null 2>&1; then
+                        _get_cmd="curl -L"
+                    elif command -v wget >/dev/null 2>&1; then
+                        _get_cmd="wget -O -"
+                    else
+                        log "ERROR" "系统中没有找到 curl 或 wget，无法下载 acme.sh。" "$RED"
+                        exit 1
+                    fi
+
+                    local _email_arg=""
+                    if [ -n "$H_EMAIL" ]; then
+                        # V5.38: 修正 email 参数格式，与 get.acme.sh 脚本一致
+                        _email_arg="email=$H_EMAIL"
+                    fi
+
+                    # 执行安装命令并检查结果
+                    if ! $_get_cmd https://raw.githubusercontent.com/acmesh-official/acme.sh/master/acme.sh | sh -s -- --install-online $_email_arg; then
+                        log "ERROR" "acme.sh 安装失败！请检查网络连接或手动安装 acme.sh。" "$RED"
+                        exit 1
+                    fi
+                    log "INFO" "acme.sh 安装完成。" "$GREEN"
+                    # V5.37: 重新加载环境变量，确保 acme.sh 命令可用
+                    # 确保 ~/.acme.sh/acme.sh 脚本被加载
+                    source "$HOME/.bashrc" 2>/dev/null || source "$HOME/.profile" 2>/dev/null || source "$HOME/.acme.sh/acme.sh" 2>/dev/null || true
+                else
+                    log "INFO" "检测到已安装的 acme.sh，跳过安装。" "$GREEN"
+                fi
+
+                # V5.42: 预检查证书状态
+                log "INFO" "检查 $H_DOMAIN 的现有证书状态..." "$BLUE"
+                local ACME_INFO_OUTPUT
+                ACME_INFO_OUTPUT=$(~/.acme.sh/acme.sh --list --home ~/.acme.sh 2>/dev/null | grep -i "^$H_DOMAIN")
+                if [ -n "$ACME_INFO_OUTPUT" ]; then
+                    log "INFO" "在 acme.sh 账户中找到 $H_DOMAIN 的证书记录。" "$GREEN"
+                    # 尝试获取更详细信息（如到期时间），这可能需要更复杂的解析
+                    local CERT_DETAIL_OUTPUT
+                    CERT_DETAIL_OUTPUT=$(~/.acme.sh/acme.sh --info --domain "$H_DOMAIN" --home ~/.acme.sh 2>/dev/null)
+                    local CERT_EXPIRE_TIME
+                    CERT_EXPIRE_TIME=$(echo "$CERT_DETAIL_OUTPUT" | grep "NotAfter\|End date" | cut -d':' -f2- | xargs)
+                    if [ -n "$CERT_EXPIRE_TIME" ]; then
+                        log "INFO" "证书到期时间: $CERT_EXPIRE_TIME" "$BLUE"
+                    else
+                        log "INFO" "无法从 acme.sh 获取详细到期时间。" "$YELLOW"
+                    fi
+                else
+                    log "INFO" "在 acme.sh 账户中未找到 $H_DOMAIN 的证书记录。" "$YELLOW"
+                fi
+
+                # 2. 停止可能占用 80 端口的旧进程
+                log "INFO" "确保 80 端口可用..." "$BLUE"
+                ~/.acme.sh/acme.sh --stop --home ~/.acme.sh &>/dev/null
+
+                # 3. 正式申请（standalone 模式，需要 80 端口开放）
+                log "INFO" "开始申请证书，请确保域名 $H_DOMAIN 已正确解析到此服务器的 IPv4 地址，且 80 端口开放。" "$BLUE"
+                # V5.40: 捕获 acme.sh 的输出和返回码
+                # V5.43: 初始尝试不带 --force
+                local ACME_OUTPUT
+                ACME_OUTPUT=$(~/.acme.sh/acme.sh --issue -d "$H_DOMAIN" \
+                    --standalone \
+                    --keylength ec-256 \
+                    --home ~/.acme.sh \
+                    --log-level 2 \
+                    --pre-hook "systemctl stop hysteria-server.service 2>/dev/null || true" \
+                    --post-hook "systemctl start hysteria-server.service 2>/dev/null || true" 2>&1)
+                local ACME_EXIT_CODE=$?
+
+                # V5.41: 重新设计 acme.sh 状态判断逻辑
+                # 优先检查输出内容，再检查返回码
+                if echo "$ACME_OUTPUT" | grep -q "Skipping\|already\|renew"; then
+                    # acme.sh 认为证书已存在且无需更新，即使返回码非0
+                    log "WARN" "acme.sh 指示证书已存在且尚未到期，申请被跳过 (退出码: $ACME_EXIT_CODE)。" "$YELLOW"
+                    log "INFO" "如果需要强制重新申请，请删除现有证书或使用 '--force' 参数手动运行 acme.sh。" "$BLUE"
+                    # V5.41: 检查证书文件是否存在，因为 acme.sh 说跳过，但我们仍需确保目标文件存在
+                    if [ ! -f "$CERT_PATH" ] || [ ! -f "$KEY_PATH" ]; then
+                        # V5.43: 文件不存在，但 acme.sh 跳过了。尝试强制申请。
+                        log "WARN" "acme.sh 报告跳过，但目标证书文件不存在。尝试强制申请..." "$YELLOW"
+                        ACME_OUTPUT=$(~/.acme.sh/acme.sh --issue -d "$H_DOMAIN" \
+                            --standalone \
+                            --keylength ec-256 \
+                            --home ~/.acme.sh \
+                            --log-level 2 \
+                            --force \
+                            --pre-hook "systemctl stop hysteria-server.service 2>/dev/null || true" \
+                            --post-hook "systemctl start hysteria-server.service 2>/dev/null || true" 2>&1)
+                        ACME_EXIT_CODE=$?
+
+                        if [ $ACME_EXIT_CODE -ne 0 ]; then
+                            # 强制申请也失败了
+                            log "ERROR" "acme.sh 强制申请失败！命令返回码: $ACME_EXIT_CODE" "$RED"
+                            log "DEBUG" "acme.sh 强制申请输出:\n$ACME_OUTPUT" "$YELLOW"
+                            log "INFO" "常见原因：①域名未解析到本机 ②80端口被防火墙阻挡 ③已达Let's Encrypt限额。" "$YELLOW"
+                            log "INFO" "请检查：" "$YELLOW"
+                            local SERVER_IP_V4
+                            SERVER_IP_V4=$(curl -4s ifconfig.co 2>/dev/null || curl -4s icanhazip.com 2>/dev/null)
+                            if [ -n "$SERVER_IP_V4" ]; then
+                                log "INFO" "  - 域名 $H_DOMAIN 的 DNS A 记录是否指向 $SERVER_IP_V4 (当前服务器 IPv4 地址)" "$YELLOW"
+                            else
+                                log "INFO" "  - 无法获取当前服务器 IPv4 地址，请手动检查域名 $H_DOMAIN 的 A 记录。" "$YELLOW"
+                            fi
+                            log "INFO" "  - 服务器防火墙是否允许 80/tcp 入站 (例如: ufw allow 80/tcp 或 iptables -I INPUT -p tcp --dport 80 -j ACCEPT)" "$YELLOW"
+                            log "INFO" "  - Let's Encrypt 速率限制 (通常每周每个主域名 5 次)" "$YELLOW"
+                            log "INFO" "您可以手动运行以下命令查看详细错误: ~/.acme.sh/acme.sh --issue -d $H_DOMAIN --standalone --force --debug 2" "$YELLOW"
+                            exit 1
+                        else
+                            # 强制申请成功
+                            log "INFO" "acme.sh 强制申请成功。" "$GREEN"
+                        fi
+                    else
+                        # 文件存在，跳过是预期的
+                        log "INFO" "已确认证书文件存在。" "$GREEN"
+                    fi
+                elif [ $ACME_EXIT_CODE -ne 0 ]; then
+                    # acme.sh 命令本身失败，且输出不包含跳过信息
+                    log "ERROR" "acme.sh 申请失败！命令返回码: $ACME_EXIT_CODE" "$RED"
+                    log "DEBUG" "acme.sh 输出:\n$ACME_OUTPUT" "$YELLOW" # 添加调试日志
+                    log "INFO" "常见原因：①域名未解析到本机 ②80端口被防火墙阻挡 ③已达Let's Encrypt限额。" "$YELLOW"
+                    log "INFO" "请检查：" "$YELLOW"
+                    # V5.40: 使用 curl 获取 IPv4 地址
+                    local SERVER_IP_V4
+                    SERVER_IP_V4=$(curl -4s ifconfig.co 2>/dev/null || curl -4s icanhazip.com 2>/dev/null)
+                    if [ -n "$SERVER_IP_V4" ]; then
+                         log "INFO" "  - 域名 $H_DOMAIN 的 DNS A 记录是否指向 $SERVER_IP_V4 (当前服务器 IPv4 地址)" "$YELLOW"
+                    else
+                         log "INFO" "  - 无法获取当前服务器 IPv4 地址，请手动检查域名 $H_DOMAIN 的 A 记录。" "$YELLOW"
+                    fi
+                    log "INFO" "  - 服务器防火墙是否允许 80/tcp 入站 (例如: ufw allow 80/tcp 或 iptables -I INPUT -p tcp --dport 80 -j ACCEPT)" "$YELLOW"
+                    log "INFO" "  - Let's Encrypt 速率限制 (通常每周每个主域名 5 次)" "$YELLOW"
+                    log "INFO" "您可以手动运行以下命令查看详细错误: ~/.acme.sh/acme.sh --issue -d $H_DOMAIN --standalone --debug 2" "$YELLOW"
+                    exit 1
+                else
+                    # acme.sh 成功申请或更新了证书 (返回码为0，且无跳过信息)
+                    log "INFO" "acme.sh 证书申请/更新成功。" "$GREEN"
+                fi
+
+                # 4. 安装证书到指定路径（生成 fullchain.cer 与 .key）
+                log "INFO" "正在安装证书到指定路径..." "$BLUE"
+                # V5.44: 确保目标目录存在
+                local TARGET_CERT_DIR
+                TARGET_CERT_DIR=$(dirname "$CERT_PATH") # /root/.acme.sh/jp.401520.xyz
+                if [ ! -d "$TARGET_CERT_DIR" ]; then
+                    log "INFO" "目标证书目录 $TARGET_CERT_DIR 不存在，正在创建..." "$BLUE"
+                    if ! mkdir -p "$TARGET_CERT_DIR"; then
+                        log "ERROR" "无法创建目标证书目录 $TARGET_CERT_DIR" "$RED"
+                        exit 1
+                    fi
+                fi
+                ~/.acme.sh/acme.sh --install-cert -d "$H_DOMAIN" \
+                    --ecc \
+                    --fullchain-file "$CERT_PATH" \
+                    --key-file     "$KEY_PATH" \
+                    --reloadcmd    "true"
+
+                if [ $? -ne 0 ]; then
+                    log "ERROR" "acme.sh 安装证书到指定路径失败！" "$RED"
+                    log "DEBUG" "检查文件是否存在: $CERT_PATH, $KEY_PATH" "$YELLOW"
+                    ls -la "$HOME/.acme.sh/$H_DOMAIN/" 2>/dev/null || log "DEBUG" "acme.sh 证书目录不存在或无法访问: $HOME/.acme.sh/$H_DOMAIN/" "$YELLOW"
+                    exit 1
+                fi
+
+                log "INFO" "acme.sh 证书申请+安装完成！" "$GREEN"
+                log "INFO" "证书路径：$CERT_PATH" "$GREEN"
+                log "INFO" "私钥路径：$KEY_PATH" "$GREEN"
+            else
+                log "INFO" "检测到已有 acme.sh 证书文件，直接使用。" "$GREEN"
             fi
+            # V5.35: 对于 acme.sh 证书，设置 H_INSECURE
+            H_INSECURE="false"
         elif [ "$CERT_METHOD" == "existing" ]; then
+            # V5.50: Clarify the path for existing certificates
+            log "INFO" "您选择了使用本地现有证书。" "$BLUE"
+            log "INFO" "请确保以下证书文件已存在于指定路径:" "$BLUE"
+            log "INFO" "  证书链文件: $CONFIG_DIR/certs/$H_DOMAIN/fullchain.pem" "$BLUE"
+            log "INFO" "  私钥文件: $CONFIG_DIR/certs/$H_DOMAIN/privkey.pem" "$BLUE"
+            log "INFO" "如果文件不存在，脚本将退出。" "$BLUE"
+
             CERT_PATH="$CONFIG_DIR/certs/$H_DOMAIN/fullchain.pem"
             KEY_PATH="$CONFIG_DIR/certs/$H_DOMAIN/privkey.pem"
             if [ ! -f "$CERT_PATH" ] || [ ! -f "$KEY_PATH" ]; then
                 log "ERROR" "$(get_msg 'err_cert_missing' "$CONFIG_DIR/certs/$H_DOMAIN/")" "$RED"
+                log "INFO" "请将正确的证书文件放置到上述路径后重试。" "$BLUE"
                 exit 1
             fi
             log "INFO" "$(get_msg 'cert_skip_success')" "$GREEN"
+            # V5.35: 对于现有证书，设置 H_INSECURE
+            H_INSECURE="true"
+        else # internal_acme
+            # V5.35: 对于内置 ACME 证书，设置 H_INSECURE
+            H_INSECURE="false"
         fi
     fi
     # 3. 输入剩余配置
@@ -818,23 +1274,43 @@ install_hysteria() {
         fi
     fi
     read -p "$(get_msg 'input_masquerade_url')" H_MASQUERADE_URL; H_MASQUERADE_URL=${H_MASQUERADE_URL:-"https://www.tencent.com"}
-    read -p "是否启用协议嗅探? (用于基于域名的路由, 默认: Y) [Y/n]: " sniffing_choice; sniffing_choice=${sniffing_choice:-Y}
+    # V5.52: 询问 QUIC 优化
+    read -p "是否启用 QUIC 优化参数? (默认: Y) [Y/n]: " quic_opt_choice; quic_opt_choice=${quic_opt_choice:-Y}
+    [[ "$quic_opt_choice" =~ ^[yY]$ ]] && H_ENABLE_QUIC_OPT="true" || H_ENABLE_QUIC_OPT="false"
+    # V5.52: 询问 SpeedTest
+    read -p "是否启用 SpeedTest 功能? (默认: N) [y/N]: " speed_test_choice; speed_test_choice=${speed_test_choice:-N}
+    [[ "$speed_test_choice" =~ ^[yY]$ ]] && H_ENABLE_SPEED_TEST="true" || H_ENABLE_SPEED_TEST="false"
+    read -p "是否启用协议嗅探? (用于基于域名的路由, 默认: N) [Y/n]: " sniffing_choice; sniffing_choice=${sniffing_choice:-N} # V5.50: 默认为 N
     [[ "$sniffing_choice" =~ ^[yY]$ ]] && H_ENABLE_SNIFFING="true" || H_ENABLE_SNIFFING="false"
     read -p "是否配置 SOCKS5 出站代理? (例如: 用于解锁流媒体, 默认: N) [y/N]: " outbound_choice; outbound_choice=${outbound_choice:-N}
-    [[ "$outbound_choice" =~ ^[yY]$ ]] && H_ENABLE_OUTBOUND="true" || H_ENABLE_OUTBOUND="false"
-    # 3.5 修正：设置 H_INSECURE
-    if [ "$CERT_METHOD" == "internal_acme" ] || [ "$CERT_METHOD" == "acme_sh" ]; then
-        H_INSECURE="false"
+    if [[ "$outbound_choice" =~ ^[yY]$ ]]; then
+        H_ENABLE_OUTBOUND="true"
+        read -p "请输入 SOCKS5 代理地址 (默认: 127.0.0.1:1080): " H_OUTBOUND_ADDR_INPUT
+        H_OUTBOUND_ADDR=${H_OUTBOUND_ADDR_INPUT:-"127.0.0.1:1080"}
+        read -s -p "请输入 SOCKS5 用户名 (留空则无认证): " H_OUTBOUND_USER_INPUT; echo
+        H_OUTBOUND_USER=${H_OUTBOUND_USER_INPUT:-""} # 可以为空
+        read -s -p "请输入 SOCKS5 密码 (留空则无认证): " H_OUTBOUND_PASS_INPUT; echo
+        H_OUTBOUND_PASS=${H_OUTBOUND_PASS_INPUT:-""} # 可以为空
     else
-        H_INSECURE="true"
+        H_ENABLE_OUTBOUND="false"
+        H_OUTBOUND_ADDR=""
+        H_OUTBOUND_USER=""
+        H_OUTBOUND_PASS=""
     fi
-    # 4. 安装执行
-    download_and_install; rollback_files+=("$CONFIG_FILE" "$SYSTEMD_SERVICE")
-    create_config_file
-    create_systemd_service
+
+    # 4. 安装执行 - V5.39: 为这部分设置 trap
+    local rollback_files=()
+    # V5.39: 在安装执行部分开始时设置 trap
+    trap 'rollback_install "${rollback_files[@]}"; exit 1' ERR
+
+    download_and_install; rollback_files+=("$BINARY_PATH")
+    create_config_file; rollback_files+=("$CONFIG_FILE")
+    create_systemd_service; rollback_files+=("$SYSTEMD_SERVICE")
+
     log "INFO" "正在启动 Hysteria2 服务..." "$BLUE"; systemctl start "$SERVICE_NAME"
     log "INFO" "等待 5 秒检查服务状态..." "$YELLOW"; sleep 5
     if systemctl is-active --quiet "$SERVICE_NAME"; then
+        # V5.37: 设置一个标志表示安装成功，这样 trap 不会错误触发
         INSTALL_SUCCESS="true"
         log "INFO" "$(get_msg 'install_complete')" "$GREEN"
         create_shortcut
@@ -843,52 +1319,88 @@ install_hysteria() {
     else
         log "ERROR" "Hysteria2 服务启动失败，请检查日志!" "$RED"
         journalctl -u "$SERVICE_NAME" -n 20 --no-pager
+        # V5.39: 如果服务启动失败，手动触发回滚
+        rollback_install "${rollback_files[@]}"
         exit 1
     fi
+    # V5.39: 清除 trap，避免在函数正常结束时误触发
+    trap - ERR
 }
 
-rollback_install() {
-    log "ERROR" "安装失败，正在回滚..." "$RED"
-    for file in "$@"; do
-        [ -f "$file" ] && rm -f "$file" && log "INFO" "已删除 $file" "$YELLOW"
-    done
-    exit 1
-}
 
 # --- 主函数 (V5.10 修正后的流程控制) ---
+# V5.38: 修正 main 函数，将语言选择和流程控制放在最前面
+# V5.48: 确保语言选择在流程最开始执行，即使 .lang 文件存在
 main() {
     trap cleanup_exit EXIT
     check_root
-    
+
     # 确保主脚本路径被设置
     local SCRIPT_NAME=$(basename "$0")
     SCRIPT_PATH="/opt/hysteria/$SCRIPT_NAME"
 
+    # --- V5.48: 强制检查语言文件，如果不存在则选择语言 ---
+    # 检查 /etc/hysteria 目录是否存在
+    if [ ! -d "$CONFIG_DIR" ]; then
+        # 如果整个配置目录都不存在，说明是全新安装，必须选择语言
+        log "INFO" "检测到全新安装，开始语言选择。" "$BLUE"
+        mkdir -p "$CONFIG_DIR"
+        echo -e "${GREEN}请选择语言 / Please select language:${NC}"
+        echo -e "${YELLOW}1) 中文 (Chinese)${NC}"
+        echo -e "${YELLOW}2) English${NC}"
+        read -p "Enter choice [1-2] (default: 1): " lang_choice
+        case $lang_choice 在
+            2) echo "en" > "$LANG_FILE" ;;
+            *) echo "zh" > "$LANG_FILE" ;; # 默认中文
+        esac
+    else
+        # 目录存在，检查语言文件是否存在
+        if [ ! -f "$LANG_FILE" ]; then
+            # 目录存在但语言文件不存在，提示用户选择语言
+            log "INFO" "未找到语言配置文件，开始语言选择。" "$BLUE"
+            echo -e "${GREEN}请选择语言 / Please select language:${NC}"
+            echo -e "${YELLOW}1) 中文 (Chinese)${NC}"
+            echo -e "${YELLOW}2) English${NC}"
+            read -p "Enter choice [1-2] (default: 1): " lang_choice
+            case $lang_choice in
+                2) echo "en" > "$LANG_FILE" ;;
+                *) echo "zh" > "$LANG_FILE" ;; # 默认中文
+            esac
+        else
+            # 语言文件存在，读取并使用
+            log "INFO" "已加载语言配置: $(cat $LANG_FILE)" "$BLUE"
+        fi
+    fi
+
+    # --- V5.38: 检查是否是管理菜单调用 ---
     if [ "$1" == "manage_menu" ]; then
         manage_menu
         exit 0
     fi
 
+    # --- V5.38: 检查是否已安装 ---
     if [ -f "$BINARY_PATH" ]; then
         clear
-        
+
         echo -e "${GREEN}检测到 Hysteria2 已安装, 请选择操作:${NC}\n${YELLOW}---------------------------------${NC}"
         echo -e " 1) 管理服务 (推荐使用 'hy2' 命令)\n 2) 卸载并重装\n 3) 仅卸载\n 4) 退出${NC}"
         echo -e "${YELLOW}---------------------------------${NC}"
-        
+
         read -p "请输入选项 [1-4]: " action
-        case "$action" in 
-            1) manage_menu;; 
-            2) 
+        case "$action" in
+            1) manage_menu;;
+            2)
                 if uninstall_hysteria; then
                     install_hysteria
                 fi
-                ;; 
-            3) uninstall_hysteria;; 
-            4) exit 0;; 
-            *) echo -e "${RED}无效选项${NC}"; exit 1;; 
+                ;;
+            3) uninstall_hysteria;;
+            4) exit 0;;
+            *) echo -e "${RED}无效选项${NC}"; exit 1;;
         esac
     else
+        # --- V5.38: 如果未安装，则开始安装流程 ---
+        log "INFO" "未检测到 Hysteria2 二进制文件，开始安装流程。" "$BLUE"
         install_hysteria
     fi
 }
