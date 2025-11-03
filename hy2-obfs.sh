@@ -18,7 +18,7 @@ H_PORT="443"
 H_PASSWORD=""
 H_ENABLE_OBFS="false"
 H_OBFS_PASSWORD=""
-H_MASQUERADE_URL="https://www.bing.com"
+H_MASQUERADE_URL="https://www.tencent.com"
 H_ENABLE_PORT_HOP="false"
 H_PORT_HOP_RANGE="40000-60000"
 H_ENABLE_SNIFFING="false"
@@ -43,7 +43,7 @@ MESSAGES[zh_confirm_obfs]="是否启用 Salamander 混淆? (强烈推荐, 默认
 MESSAGES[zh_confirm_port_hop]="是否开启端口跳跃功能? (默认: Y) [Y/n]: "
 MESSAGES[zh_input_port_hop_range]="请输入端口跳跃范围 (例如: 40000-60000, 默认: 40000-60000): "
 MESSAGES[zh_input_obfs_password]="请输入混淆密码 (留空将使用默认): "
-MESSAGES[zh_input_masquerade_url]="请输入伪装 URL (默认: https://www.bing.com): "
+MESSAGES[zh_input_masquerade_url]="请输入伪装 URL (默认: https://www.tencent.com): "
 MESSAGES[zh_select_cert_method]="请选择证书获取方式:"
 MESSAGES[zh_cert_method_internal]=" 1) Hysteria 内置 ACME (推荐, 简单)"
 MESSAGES[zh_cert_method_acmesh]=" 2) 使用 acme.sh (支持 DNS API, 功能更强大)"
@@ -475,7 +475,7 @@ generate_client_config() {
     H_DOMAIN=${H_DOMAIN:-"[YOUR_DOMAIN_HERE]"}
     H_PORT=${H_PORT:-"443"}
     H_PASSWORD=${H_PASSWORD:-"[YOUR_PASSWORD_HERE]"}
-    H_MASQUERADE_URL=${H_MASQUERADE_URL:-"https://www.bing.com"}
+    H_MASQUERADE_URL=${H_MASQUERADE_URL:-"https://www.tencent.com"}
     H_INSECURE=${H_INSECURE:-"true"}
 
     # 变量格式验证（略）
@@ -665,9 +665,9 @@ manage_menu() {
         H_PORT=$(grep 'listen:' "$CONFIG_FILE" | sed 's/listen: ://g' | tr -d '\n\r' || echo "443")
         H_PASSWORD=$(grep -m 1 'password:' "$CONFIG_FILE" | sed 's/password: \"//g;s/\"//g' | tr -d '\n\r' || echo "")
         # 精确读取 masquerade 块下的 url/addr
-        H_MASQUERADE_URL=$(grep 'url:' "$CONFIG_FILE" | sed 's/.*url: //g' | tr -d '\"' | head -n 1 || echo "https://www.bing.com")
+        H_MASQUERADE_URL=$(grep 'url:' "$CONFIG_FILE" | sed 's/.*url: //g' | tr -d '\"' | head -n 1 || echo "https://www.tencent.com")
         if [ -z "$H_MASQUERADE_URL" ]; then
-            H_MASQUERADE_URL=$(grep 'addr:' "$CONFIG_FILE" | sed 's/.*addr: //g' | tr -d '\"' | head -n 1 || echo "https://www.bing.com")
+            H_MASQUERADE_URL=$(grep 'addr:' "$CONFIG_FILE" | sed 's/.*addr: //g' | tr -d '\"' | head -n 1 || echo "https://www.tencent.com")
         fi
         if grep -q 'salamander:' "$CONFIG_FILE"; then
             H_ENABLE_OBFS="true"
@@ -817,7 +817,7 @@ install_hysteria() {
             H_ENABLE_PORT_HOP="false"; H_PORT_HOP_RANGE=""
         fi
     fi
-    read -p "$(get_msg 'input_masquerade_url')" H_MASQUERADE_URL; H_MASQUERADE_URL=${H_MASQUERADE_URL:-"https://www.bing.com"}
+    read -p "$(get_msg 'input_masquerade_url')" H_MASQUERADE_URL; H_MASQUERADE_URL=${H_MASQUERADE_URL:-"https://www.tencent.com"}
     read -p "是否启用协议嗅探? (用于基于域名的路由, 默认: Y) [Y/n]: " sniffing_choice; sniffing_choice=${sniffing_choice:-Y}
     [[ "$sniffing_choice" =~ ^[yY]$ ]] && H_ENABLE_SNIFFING="true" || H_ENABLE_SNIFFING="false"
     read -p "是否配置 SOCKS5 出站代理? (例如: 用于解锁流媒体, 默认: N) [y/N]: " outbound_choice; outbound_choice=${outbound_choice:-N}
