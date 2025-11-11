@@ -397,7 +397,7 @@ create_config_file() {
 
     # --- V5.52: 添加 QUIC 优化块 ---
     local QUIC_BLOCK=""
-    if [ "$H_ENABLE_QUIC_OPT" == "true" ]; then
+    if [ "$H_ENABLE_QUIC_OPT" = "true" ]; then
         QUIC_BLOCK=$(cat << EOF
 quic:
   initStreamReceiveWindow: 8388608
@@ -413,7 +413,7 @@ EOF
 
     # --- V5.52: 修正 Sniff 配置块 ---
     local SNIFF_BLOCK=""
-    if [ "$H_ENABLE_SNIFFING" == "true" ]; then
+    if [ "$H_ENABLE_SNIFFING" = "true" ]; then
         SNIFF_BLOCK=$(cat << EOF
 sniff:
   enable: true
@@ -426,7 +426,7 @@ EOF
 
     # Obfuscation 配置
     local OBFUSCATION_BLOCK=""
-    if [ "$H_ENABLE_OBFS" == "true" ] && [ -n "$H_OBFS_PASSWORD" ]; then
+    if [ "$H_ENABLE_OBFS" = "true" ] && [ -n "$H_OBFS_PASSWORD" ]; then
         OBFUSCATION_BLOCK=$(cat << EOF
 obfs:
   type: salamander
@@ -451,7 +451,7 @@ EOF
 
     # TLS 或 ACME 配置 (使用 CERT_METHOD 决定结构)
     local TLS_CONFIG=""
-    if [ "$CERT_METHOD" == "internal_acme" ]; then
+    if [ "$CERT_METHOD" = "internal_acme" ]; then
         if [ -z "$H_EMAIL" ]; then
             log "ERROR" "错误：internal_acme 模式需要 H_EMAIL" "$RED"
             exit 1
@@ -485,7 +485,7 @@ EOF
 
     # Outbound 配置
     local OUTBOUND_BLOCK=""
-    if [ "$H_ENABLE_OUTBOUND" == "true" ]; then
+    if [ "$H_ENABLE_OUTBOUND" = "true" ]; then
         OUTBOUND_BLOCK=$(cat << EOF
 outbounds:
   - name: socks
@@ -500,7 +500,7 @@ EOF
 
     # --- V5.52: 添加 SpeedTest 配置 ---
     local SPEED_TEST_BLOCK=""
-    if [ "$H_ENABLE_SPEED_TEST" == "true" ]; then
+    if [ "$H_ENABLE_SPEED_TEST" = "true" ]; then
         SPEED_TEST_BLOCK="speedTest: true"
     fi
 
@@ -563,7 +563,7 @@ cleanup_firewall() {
         iptables -t nat -D PREROUTING -p udp --dport "$TARGET_PORT" -j DNAT --to-destination :"$TARGET_PORT" 2>/dev/null
         log "INFO" "已删除主端口 $TARGET_PORT 的 DNAT 规则" "$YELLOW"
     fi
-    if [ "$H_ENABLE_PORT_HOP" == "true" ] && [ -n "$H_PORT_HOP_RANGE" ]; then
+    if [ "$H_ENABLE_PORT_HOP" = "true" ] && [ -n "$H_PORT_HOP_RANGE" ]; then
         if iptables -t nat -S PREROUTING | grep -q "DNAT.*--dport.*$range_iptables"; then
             iptables -t nat -D PREROUTING -p udp --dport "$range_iptables" -j DNAT --to-destination :"$TARGET_PORT" 2>/dev/null
             log "INFO" "已删除端口跳跃范围 $range_iptables 的 DNAT 规则" "$YELLOW"
@@ -680,7 +680,7 @@ configure_firewall() {
     iptables -A INPUT -p udp --dport "$TARGET_PORT" -j ACCEPT
     if [ $? -eq 0 ]; then has_changes=1; fi
 
-    if [ "$H_ENABLE_PORT_HOP" == "true" ] && [ -n "$H_PORT_HOP_RANGE" ]; then
+    if [ "$H_ENABLE_PORT_HOP" = "true" ] && [ -n "$H_PORT_HOP_RANGE" ]; then
         # 替换 - 为 : 以符合 iptables 格式
         local range=$(echo "$H_PORT_HOP_RANGE" | sed 's/-/:/g')
 
@@ -749,7 +749,7 @@ generate_client_config() {
     local CLI_PORT_HOP_BLOCK=""
     local H_ENABLE_URI_PORT_RANGE="false" # 用于控制 URI 是否包含端口范围
 
-    if [ "$H_ENABLE_OBFS" == "true" ] && [ -n "$H_OBFS_PASSWORD" ]; then
+    if [ "$H_ENABLE_OBFS" = "true" ] && [ -n "$H_OBFS_PASSWORD" ]; then
         # 1. 启用混淆
         OBFS_BLOCK=$(printf "    obfs: salamander\n    obfs-password: %s\n" "$H_OBFS_PASSWORD")
         CLI_OBFS_BLOCK=$(printf "obfs:\n  type: salamander\n  salamander:\n    password: %s\n" "$H_OBFS_PASSWORD")
@@ -757,7 +757,7 @@ generate_client_config() {
 
         # 强制禁用 URI 中的端口范围
         H_ENABLE_URI_PORT_RANGE="false"
-    elif [ "$H_ENABLE_PORT_HOP" == "true" ] && [ -n "$H_PORT_HOP_RANGE" ]; then
+    elif [ "$H_ENABLE_PORT_HOP" = "true" ] && [ -n "$H_PORT_HOP_RANGE" ]; then
         # 2. 仅启用端口跳跃
         PORT_HOP_BLOCK=$(printf "    ports: %s\n" "$H_PORT_HOP_RANGE")
         CLI_PORT_HOP_BLOCK=$(printf "ports: %s\n" "$H_PORT_HOP_RANGE")
@@ -768,19 +768,19 @@ generate_client_config() {
     local QUERY_PARAMS=()
 
     # 混淆参数
-    if [ "$H_ENABLE_OBFS" == "true" ] && [ -n "$H_OBFS_PASSWORD" ]; then
+    if [ "$H_ENABLE_OBFS" = "true" ] && [ -n "$H_OBFS_PASSWORD" ]; then
         QUERY_PARAMS+=("obfs=salamander" "obfs-password=$H_OBFS_PASSWORD")
     fi
 
     QUERY_PARAMS+=("sni=$H_DOMAIN")
-    if [ "$H_INSECURE" == "true" ]; then
+    if [ "$H_INSECURE" = "true" ]; then
         QUERY_PARAMS+=("insecure=1")
     else
         QUERY_PARAMS+=("insecure=0")
     fi
 
     # 构建 URI 端口部分
-    if [ "$H_ENABLE_URI_PORT_RANGE" == "true" ]; then
+    if [ "$H_ENABLE_URI_PORT_RANGE" = "true" ]; then
         PORT_PART="$H_PORT,$H_PORT_HOP_RANGE"
     else
         PORT_PART="$H_PORT"
@@ -847,21 +847,21 @@ generate_client_config() {
     fi
 
     # --- 5. 格式化输出 ---
-    echo -e "\n${GREEN}==============================================${NC}"
+    echo -e "\n${GREEN}=======================${NC}"
     log "$(get_msg 'client_config_info')" "$GREEN"
-    echo -e "${GREEN}==============================================${NC}"
+    echo -e "${GREEN}=======================${NC}"
     echo -e " 域名/IP: $H_DOMAIN"
     echo -e " 端口: $PORT_PART"
     echo -e " 密码: $H_PASSWORD"
 
     # 修正输出信息
-    local OBFS_INFO=$([ "$H_ENABLE_OBFS" == "true" ] && [ -n "$H_OBFS_PASSWORD" ] && echo "Salamander (密码: $H_OBFS_PASSWORD)" || echo "未启用")
+    local OBFS_INFO=$([ "$H_ENABLE_OBFS" = "true" ] && [ -n "$H_OBFS_PASSWORD" ] && echo "Salamander (密码: $H_OBFS_PASSWORD)" || echo "未启用")
     echo -e " 混淆: $OBFS_INFO"
 
     local HOP_INFO=""
-    if [ "$H_ENABLE_OBFS" == "true" ]; then
+    if [ "$H_ENABLE_OBFS" = "true" ]; then
         HOP_INFO="已禁用 (因混淆启用)"
-    elif [ "$H_ENABLE_PORT_HOP" == "true" ] && [ -n "$H_PORT_HOP_RANGE" ]; then
+    elif [ "$H_ENABLE_PORT_HOP" = "true" ] && [ -n "$H_PORT_HOP_RANGE" ]; then
         HOP_INFO="$H_PORT_HOP_RANGE (Clash Meta 使用 ports 字段)"
     else
         HOP_INFO="未启用"
@@ -893,7 +893,7 @@ generate_client_config() {
     else
         log "ERROR" "错误：无法生成 Hysteria2 CLI YAML 配置" "$RED"
     fi
-    echo -e "${GREEN}==============================================${NC}"
+    echo -e "${GREEN}=======================${NC}"
 
     # 配置防火墙（端口跳跃）
     configure_firewall
@@ -1001,7 +1001,7 @@ install_hysteria() {
         fi
     fi
     # 2. 如果未自动选择，则显示菜单并手动输入
-    if [ "$AUTO_EXISTING_CERT" == "false" ]; then
+    if [ "$AUTO_EXISTING_CERT" = "false" ]; then
         echo -e "\n$$ {GREEN} $$(get_msg 'select_cert_method')${NC}"
         echo -e "$(get_msg 'cert_method_internal')"
         echo -e "$(get_msg 'cert_method_acmesh')"
@@ -1010,16 +1010,16 @@ install_hysteria() {
             echo -e "$(get_msg 'cert_method_existing')"
         fi
         read -p "Your choice [1-$$ NUM_CHOICES]: " cert_choice; cert_choice= $${cert_choice:-1}
-        if [ "$cert_choice" == "2" ]; then CERT_METHOD="acme_sh";
-        elif [ "$cert_choice" == "3" ]; then CERT_METHOD="existing";
+        if [ "$cert_choice" = "2" ]; then CERT_METHOD="acme_sh";
+        elif [ "$cert_choice" = "3" ]; then CERT_METHOD="existing";
         else CERT_METHOD="internal_acme"; fi
         # 域名输入
         while true; do
             local DEFAULT_DOMAIN="$$ {EXISTING_DOMAIN:- $$(hostname -f)}"
-            if [ "$CERT_METHOD" == "existing" ] && [ -n "$EXISTING_DOMAIN" ]; then
+            if [ "$CERT_METHOD" = "existing" ] && [ -n "$EXISTING_DOMAIN" ]; then
                 read -p "$(get_msg 'input_domain' "$EXISTING_DOMAIN")" H_DOMAIN_INPUT
                 H_DOMAIN=${H_DOMAIN_INPUT:-$EXISTING_DOMAIN}
-            elif [ "$CERT_METHOD" == "internal_acme" ]; then
+            elif [ "$CERT_METHOD" = "internal_acme" ]; then
                 read -p "$(get_msg 'input_domain' "$DEFAULT_DOMAIN")" H_DOMAIN_INPUT
                 H_DOMAIN=${H_DOMAIN_INPUT:-$DEFAULT_DOMAIN}
             else
@@ -1037,7 +1037,7 @@ install_hysteria() {
             H_EMAIL=""
         fi
         # 证书颁发/检测
-        if [ "$CERT_METHOD" == "acme_sh" ]; then
+        if [ "$CERT_METHOD" = "acme_sh" ]; then
             CERT_PATH="$HOME/.acme.sh/$H_DOMAIN/fullchain.cer"
             KEY_PATH="$HOME/.acme.sh/$H_DOMAIN/$H_DOMAIN.key"
             # 若证书不存在 → 自动安装 acme.sh 并申请
@@ -1203,7 +1203,7 @@ install_hysteria() {
             fi
             # V5.35: 对于 acme.sh 证书，设置 H_INSECURE
             H_INSECURE="false"
-        elif [ "$CERT_METHOD" == "existing" ]; then
+        elif [ "$CERT_METHOD" = "existing" ]; then
             # V5.50: Clarify the path for existing certificates
             log "INFO" "您选择了使用本地现有证书。" "$BLUE"
             log "INFO" "请确保以下证书文件已存在于指定路径:" "$BLUE"
@@ -1344,7 +1344,7 @@ main() {
     fi
 
     # --- V5.38: 检查是否是管理菜单调用 ---
-    if [ "$1" == "manage_menu" ]; then
+    if [ "$1" = "manage_menu" ]; then
         manage_menu
         exit 0
     fi
