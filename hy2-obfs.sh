@@ -978,16 +978,6 @@ manage_menu() {
     done
 }
 
-# 安装主流程 (V5.11 修正：自动证书选择)
-# V5.11 修正：自动证书选择
-# V5.39: 重新设计 trap 和 rollback_files 逻辑
-# V5.40: 修正 IP 检查和 acme.sh 状态判断
-# V5.41: 修正 acme.sh 跳过申请时的返回码判断逻辑
-# V5.42: 增加证书状态预检查
-# V5.43: 当 acme.sh 报告跳过但文件不存在时，强制重新申请
-# V5.44: 在安装证书前确保目标目录存在
-# V5.50: 修正 existing 证书方法的提示信息
-# V5.52: 添加 QUIC 优化、SpeedTest、Outbound 认证等选项
 install_hysteria() {
     # V5.39: 将 trap 和 rollback_files 的管理移到函数内部，但只覆盖关键的、可能失败的步骤组合
     # 初始步骤（依赖检查、域名检测）失败时直接退出，不走回滚
@@ -1012,20 +1002,20 @@ install_hysteria() {
     fi
     # 2. 如果未自动选择，则显示菜单并手动输入
     if [ "$AUTO_EXISTING_CERT" == "false" ]; then
-        echo -e "\n${GREEN}$(get_msg 'select_cert_method')${NC}"
+        echo -e "\n$$ {GREEN} $$(get_msg 'select_cert_method')${NC}"
         echo -e "$(get_msg 'cert_method_internal')"
         echo -e "$(get_msg 'cert_method_acmesh')"
         if [ -d "$CERT_DIR_BASE" ]; then
             NUM_CHOICES=3
             echo -e "$(get_msg 'cert_method_existing')"
         fi
-        read -p "Your choice [1-$NUM_CHOICES]: " cert_choice; cert_choice=${cert_choice:-1}
+        read -p "Your choice [1-$$ NUM_CHOICES]: " cert_choice; cert_choice= $${cert_choice:-1}
         if [ "$cert_choice" == "2" ]; then CERT_METHOD="acme_sh";
         elif [ "$cert_choice" == "3" ]; then CERT_METHOD="existing";
         else CERT_METHOD="internal_acme"; fi
         # 域名输入
         while true; do
-            local DEFAULT_DOMAIN="${EXISTING_DOMAIN:-$(hostname -f)}"
+            local DEFAULT_DOMAIN="$$ {EXISTING_DOMAIN:- $$(hostname -f)}"
             if [ "$CERT_METHOD" == "existing" ] && [ -n "$EXISTING_DOMAIN" ]; then
                 read -p "$(get_msg 'input_domain' "$EXISTING_DOMAIN")" H_DOMAIN_INPUT
                 H_DOMAIN=${H_DOMAIN_INPUT:-$EXISTING_DOMAIN}
@@ -1042,7 +1032,7 @@ install_hysteria() {
         done
         # 邮箱输入
         if [ "$CERT_METHOD" != "existing" ]; then
-            read -p "$(get_msg 'input_email' "$H_DOMAIN")" H_EMAIL; H_EMAIL=${H_EMAIL:-"admin@$H_DOMAIN"}
+            read -p "$(get_msg 'input_email' "$$ H_DOMAIN")" H_EMAIL; H_EMAIL= $${H_EMAIL:-"admin@$H_DOMAIN"}
         else
             H_EMAIL=""
         fi
@@ -1050,44 +1040,37 @@ install_hysteria() {
         if [ "$CERT_METHOD" == "acme_sh" ]; then
             CERT_PATH="$HOME/.acme.sh/$H_DOMAIN/fullchain.cer"
             KEY_PATH="$HOME/.acme.sh/$H_DOMAIN/$H_DOMAIN.key"
-
             # 若证书不存在 → 自动安装 acme.sh 并申请
             if [ ! -f "$CERT_PATH" ] || [ ! -f "$KEY_PATH" ]; then
                 log "INFO" "正在使用 acme.sh 为 $H_DOMAIN 申请 Let's Encrypt 证书…" "$BLUE"
-
                 # 1. 自动安装 acme.sh（只执行一次）
                 if [ ! -d "$HOME/.acme.sh" ]; then
                     log "INFO" "未检测到 acme.sh，正在自动安装…" "$BLUE"
-                    # V5.37: 使用官方推荐的安装命令，并检查 curl/wget
-                    local _get_cmd=""
-                    if command -v curl >/dev/null 2>&1; then
-                        _get_cmd="curl -L"
-                    elif command -v wget >/dev/null 2>&1; then
-                        _get_cmd="wget -O -"
+                    # 优化：直接使用官方一键命令，自动重试（curl → wget）
+                    local install_success=false
+                    if command -v curl >/dev/null 2>&1 && curl https://get.acme.sh | sh -s email="$H_EMAIL"; then
+                        install_success=true
+                    elif command -v wget >/dev/null 2>&1 && wget -O - https://get.acme.sh | sh -s email="$H_EMAIL"; then
+                        install_success=true
                     else
-                        log "ERROR" "系统中没有找到 curl 或 wget，无法下载 acme.sh。" "$RED"
+                        log "ERROR" "acme.sh 安装失败！请检查网络连接。" "$RED"
                         exit 1
                     fi
-
-                    local _email_arg=""
-                    if [ -n "$H_EMAIL" ]; then
-                        # V5.38: 修正 email 参数格式，与 get.acme.sh 脚本一致
-                        _email_arg="email=$H_EMAIL"
+                    if [ "$install_success" = true ]; then
+                        # 自动验证安装
+                        if [ -x "$HOME/.acme.sh/acme.sh" ]; then
+                            log "INFO" "acme.sh 安装并验证成功。" "$GREEN"
+                            # 强制加载环境
+                            source "$HOME/.bashrc" 2>/dev/null || source "$HOME/.acme.sh/acme.sh" 2>/dev/null || true
+                            alias acme.sh="$HOME/.acme.sh/acme.sh" 2>/dev/null || true
+                        else
+                            log "ERROR" "acme.sh 安装后验证失败：脚本文件不可执行 ($HOME/.acme.sh/acme.sh)。" "$RED"
+                            exit 1
+                        fi
                     fi
-
-                    # 执行安装命令并检查结果
-                    if ! curl https://get.acme.sh | sh -s email=$H_EMAIL; then
-                        log "ERROR" "acme.sh 安装失败！请检查网络连接或手动安装 acme.sh。" "$RED"
-                        exit 1
-                    fi
-                    log "INFO" "acme.sh 安装完成。" "$GREEN"
-                    # V5.37: 重新加载环境变量，确保 acme.sh 命令可用
-                    # 确保 ~/.acme.sh/acme.sh 脚本被加载
-                    source "$HOME/.bashrc" 2>/dev/null || source "$HOME/.profile" 2>/dev/null || source "$HOME/.acme.sh/acme.sh" 2>/dev/null || true
                 else
                     log "INFO" "检测到已安装的 acme.sh，跳过安装。" "$GREEN"
                 fi
-
                 # V5.42: 预检查证书状态
                 log "INFO" "检查 $H_DOMAIN 的现有证书状态..." "$BLUE"
                 local ACME_INFO_OUTPUT
@@ -1107,11 +1090,9 @@ install_hysteria() {
                 else
                     log "INFO" "在 acme.sh 账户中未找到 $H_DOMAIN 的证书记录。" "$YELLOW"
                 fi
-
                 # 2. 停止可能占用 80 端口的旧进程
                 log "INFO" "确保 80 端口可用..." "$BLUE"
                 ~/.acme.sh/acme.sh --stop --home ~/.acme.sh &>/dev/null
-
                 # 3. 正式申请（standalone 模式，需要 80 端口开放）
                 log "INFO" "开始申请证书，请确保域名 $H_DOMAIN 已正确解析到此服务器的 IPv4 地址，且 80 端口开放。" "$BLUE"
                 # V5.40: 捕获 acme.sh 的输出和返回码
@@ -1125,7 +1106,6 @@ install_hysteria() {
                     --pre-hook "systemctl stop hysteria-server.service 2>/dev/null || true" \
                     --post-hook "systemctl start hysteria-server.service 2>/dev/null || true" 2>&1)
                 local ACME_EXIT_CODE=$?
-
                 # V5.41: 重新设计 acme.sh 状态判断逻辑
                 # 优先检查输出内容，再检查返回码
                 if echo "$ACME_OUTPUT" | grep -q "Skipping\|already\|renew"; then
@@ -1145,7 +1125,6 @@ install_hysteria() {
                             --pre-hook "systemctl stop hysteria-server.service 2>/dev/null || true" \
                             --post-hook "systemctl start hysteria-server.service 2>/dev/null || true" 2>&1)
                         ACME_EXIT_CODE=$?
-
                         if [ $ACME_EXIT_CODE -ne 0 ]; then
                             # 强制申请也失败了
                             log "ERROR" "acme.sh 强制申请失败！命令返回码: $ACME_EXIT_CODE" "$RED"
@@ -1155,12 +1134,12 @@ install_hysteria() {
                             local SERVER_IP_V4
                             SERVER_IP_V4=$(curl -4s ifconfig.co 2>/dev/null || curl -4s icanhazip.com 2>/dev/null)
                             if [ -n "$SERVER_IP_V4" ]; then
-                                log "INFO" "  - 域名 $H_DOMAIN 的 DNS A 记录是否指向 $SERVER_IP_V4 (当前服务器 IPv4 地址)" "$YELLOW"
+                                log "INFO" " - 域名 $H_DOMAIN 的 DNS A 记录是否指向 $SERVER_IP_V4 (当前服务器 IPv4 地址)" "$YELLOW"
                             else
-                                log "INFO" "  - 无法获取当前服务器 IPv4 地址，请手动检查域名 $H_DOMAIN 的 A 记录。" "$YELLOW"
+                                log "INFO" " - 无法获取当前服务器 IPv4 地址，请手动检查域名 $H_DOMAIN 的 A 记录。" "$YELLOW"
                             fi
-                            log "INFO" "  - 服务器防火墙是否允许 80/tcp 入站 (例如: ufw allow 80/tcp 或 iptables -I INPUT -p tcp --dport 80 -j ACCEPT)" "$YELLOW"
-                            log "INFO" "  - Let's Encrypt 速率限制 (通常每周每个主域名 5 次)" "$YELLOW"
+                            log "INFO" " - 服务器防火墙是否允许 80/tcp 入站 (例如: ufw allow 80/tcp 或 iptables -I INPUT -p tcp --dport 80 -j ACCEPT)" "$YELLOW"
+                            log "INFO" " - Let's Encrypt 速率限制 (通常每周每个主域名 5 次)" "$YELLOW"
                             log "INFO" "您可以手动运行以下命令查看详细错误: ~/.acme.sh/acme.sh --issue -d $H_DOMAIN --standalone --force --debug 2" "$YELLOW"
                             exit 1
                         else
@@ -1181,19 +1160,18 @@ install_hysteria() {
                     local SERVER_IP_V4
                     SERVER_IP_V4=$(curl -4s ifconfig.co 2>/dev/null || curl -4s icanhazip.com 2>/dev/null)
                     if [ -n "$SERVER_IP_V4" ]; then
-                         log "INFO" "  - 域名 $H_DOMAIN 的 DNS A 记录是否指向 $SERVER_IP_V4 (当前服务器 IPv4 地址)" "$YELLOW"
+                         log "INFO" " - 域名 $H_DOMAIN 的 DNS A 记录是否指向 $SERVER_IP_V4 (当前服务器 IPv4 地址)" "$YELLOW"
                     else
-                         log "INFO" "  - 无法获取当前服务器 IPv4 地址，请手动检查域名 $H_DOMAIN 的 A 记录。" "$YELLOW"
+                         log "INFO" " - 无法获取当前服务器 IPv4 地址，请手动检查域名 $H_DOMAIN 的 A 记录。" "$YELLOW"
                     fi
-                    log "INFO" "  - 服务器防火墙是否允许 80/tcp 入站 (例如: ufw allow 80/tcp 或 iptables -I INPUT -p tcp --dport 80 -j ACCEPT)" "$YELLOW"
-                    log "INFO" "  - Let's Encrypt 速率限制 (通常每周每个主域名 5 次)" "$YELLOW"
+                    log "INFO" " - 服务器防火墙是否允许 80/tcp 入站 (例如: ufw allow 80/tcp 或 iptables -I INPUT -p tcp --dport 80 -j ACCEPT)" "$YELLOW"
+                    log "INFO" " - Let's Encrypt 速率限制 (通常每周每个主域名 5 次)" "$YELLOW"
                     log "INFO" "您可以手动运行以下命令查看详细错误: ~/.acme.sh/acme.sh --issue -d $H_DOMAIN --standalone --debug 2" "$YELLOW"
                     exit 1
                 else
                     # acme.sh 成功申请或更新了证书 (返回码为0，且无跳过信息)
                     log "INFO" "acme.sh 证书申请/更新成功。" "$GREEN"
                 fi
-
                 # 4. 安装证书到指定路径（生成 fullchain.cer 与 .key）
                 log "INFO" "正在安装证书到指定路径..." "$BLUE"
                 # V5.44: 确保目标目录存在
@@ -1209,16 +1187,14 @@ install_hysteria() {
                 ~/.acme.sh/acme.sh --install-cert -d "$H_DOMAIN" \
                     --ecc \
                     --fullchain-file "$CERT_PATH" \
-                    --key-file     "$KEY_PATH" \
-                    --reloadcmd    "true"
-
+                    --key-file "$KEY_PATH" \
+                    --reloadcmd "true"
                 if [ $? -ne 0 ]; then
                     log "ERROR" "acme.sh 安装证书到指定路径失败！" "$RED"
                     log "DEBUG" "检查文件是否存在: $CERT_PATH, $KEY_PATH" "$YELLOW"
                     ls -la "$HOME/.acme.sh/$H_DOMAIN/" 2>/dev/null || log "DEBUG" "acme.sh 证书目录不存在或无法访问: $HOME/.acme.sh/$H_DOMAIN/" "$YELLOW"
                     exit 1
                 fi
-
                 log "INFO" "acme.sh 证书申请+安装完成！" "$GREEN"
                 log "INFO" "证书路径：$CERT_PATH" "$GREEN"
                 log "INFO" "私钥路径：$KEY_PATH" "$GREEN"
@@ -1231,10 +1207,9 @@ install_hysteria() {
             # V5.50: Clarify the path for existing certificates
             log "INFO" "您选择了使用本地现有证书。" "$BLUE"
             log "INFO" "请确保以下证书文件已存在于指定路径:" "$BLUE"
-            log "INFO" "  证书链文件: $CONFIG_DIR/certs/$H_DOMAIN/fullchain.pem" "$BLUE"
-            log "INFO" "  私钥文件: $CONFIG_DIR/certs/$H_DOMAIN/privkey.pem" "$BLUE"
+            log "INFO" " 证书链文件: $CONFIG_DIR/certs/$H_DOMAIN/fullchain.pem" "$BLUE"
+            log "INFO" " 私钥文件: $CONFIG_DIR/certs/$H_DOMAIN/privkey.pem" "$BLUE"
             log "INFO" "如果文件不存在，脚本将退出。" "$BLUE"
-
             CERT_PATH="$CONFIG_DIR/certs/$H_DOMAIN/fullchain.pem"
             KEY_PATH="$CONFIG_DIR/certs/$H_DOMAIN/privkey.pem"
             if [ ! -f "$CERT_PATH" ] || [ ! -f "$KEY_PATH" ]; then
@@ -1250,21 +1225,21 @@ install_hysteria() {
             H_INSECURE="false"
         fi
     fi
-    # 3. 输入剩余配置
-    read -p "$(get_msg 'input_port')" H_PORT; H_PORT=${H_PORT:-443}
+    # 3. 输入剩余配置（后续逻辑保持不变，省略以聚焦修正）
+    read -p "$$ (get_msg 'input_port')" H_PORT; H_PORT= $${H_PORT:-443}
     validate_port "$H_PORT" || exit 1
-    read -s -p "$(get_msg 'input_password')" H_PASSWORD; echo; H_PASSWORD=${H_PASSWORD:-$(openssl rand -hex 16)}
-    read -p "$(get_msg 'confirm_obfs')" obfs_choice; obfs_choice=${obfs_choice:-Y}
-    if [[ "$obfs_choice" =~ ^[yY]$ ]]; then
+    read -s -p "$$ (get_msg 'input_password')" H_PASSWORD; echo; H_PASSWORD= $${H_PASSWORD:-$(openssl rand -hex 16)}
+    read -p "$$ (get_msg 'confirm_obfs')" obfs_choice; obfs_choice= $${obfs_choice:-Y}
+    if [[ "$$ obfs_choice" =~ ^[yY] $$ ]]; then
         H_ENABLE_OBFS="true"
         H_ENABLE_PORT_HOP="false" # 强制禁用端口跳跃
         log "INFO" "注意：启用混淆后，端口跳跃功能已被禁用。" "$YELLOW"
         read -s -p "$(get_msg 'input_obfs_password')" H_OBFS_PASSWORD; echo
-        H_OBFS_PASSWORD=${H_OBFS_PASSWORD:-$(openssl rand -hex 16)}
+        H_OBFS_PASSWORD=$$ {H_OBFS_PASSWORD:- $$(openssl rand -hex 16)}
     else
         H_ENABLE_OBFS="false"; H_OBFS_PASSWORD=""
-        read -p "$(get_msg 'confirm_port_hop')" hop_choice; hop_choice=${hop_choice:-Y}
-        if [[ "$hop_choice" =~ ^[yY]$ ]]; then
+        read -p "$$ (get_msg 'confirm_port_hop')" hop_choice; hop_choice= $${hop_choice:-Y}
+        if [[ "$$ hop_choice" =~ ^[yY] $$ ]]; then
             H_ENABLE_PORT_HOP="true"
             read -p "$(get_msg 'input_port_hop_range')" H_PORT_HOP_RANGE
             H_PORT_HOP_RANGE=${H_PORT_HOP_RANGE:-"40000-60000"}
@@ -1273,17 +1248,17 @@ install_hysteria() {
             H_ENABLE_PORT_HOP="false"; H_PORT_HOP_RANGE=""
         fi
     fi
-    read -p "$(get_msg 'input_masquerade_url')" H_MASQUERADE_URL; H_MASQUERADE_URL=${H_MASQUERADE_URL:-"https://www.tencent.com"}
+    read -p "$$ (get_msg 'input_masquerade_url')" H_MASQUERADE_URL; H_MASQUERADE_URL= $${H_MASQUERADE_URL:-"https://www.tencent.com"}
     # V5.52: 询问 QUIC 优化
     read -p "是否启用 QUIC 优化参数? (默认: Y) [Y/n]: " quic_opt_choice; quic_opt_choice=${quic_opt_choice:-Y}
-    [[ "$quic_opt_choice" =~ ^[yY]$ ]] && H_ENABLE_QUIC_OPT="true" || H_ENABLE_QUIC_OPT="false"
+    [[ "$$ quic_opt_choice" =~ ^[yY] $$ ]] && H_ENABLE_QUIC_OPT="true" || H_ENABLE_QUIC_OPT="false"
     # V5.52: 询问 SpeedTest
     read -p "是否启用 SpeedTest 功能? (默认: N) [y/N]: " speed_test_choice; speed_test_choice=${speed_test_choice:-N}
-    [[ "$speed_test_choice" =~ ^[yY]$ ]] && H_ENABLE_SPEED_TEST="true" || H_ENABLE_SPEED_TEST="false"
+    [[ "$$ speed_test_choice" =~ ^[yY] $$ ]] && H_ENABLE_SPEED_TEST="true" || H_ENABLE_SPEED_TEST="false"
     read -p "是否启用协议嗅探? (用于基于域名的路由, 默认: N) [Y/n]: " sniffing_choice; sniffing_choice=${sniffing_choice:-N} # V5.50: 默认为 N
-    [[ "$sniffing_choice" =~ ^[yY]$ ]] && H_ENABLE_SNIFFING="true" || H_ENABLE_SNIFFING="false"
+    [[ "$$ sniffing_choice" =~ ^[yY] $$ ]] && H_ENABLE_SNIFFING="true" || H_ENABLE_SNIFFING="false"
     read -p "是否配置 SOCKS5 出站代理? (例如: 用于解锁流媒体, 默认: N) [y/N]: " outbound_choice; outbound_choice=${outbound_choice:-N}
-    if [[ "$outbound_choice" =~ ^[yY]$ ]]; then
+    if [[ "$$ outbound_choice" =~ ^[yY] $$ ]]; then
         H_ENABLE_OUTBOUND="true"
         read -p "请输入 SOCKS5 代理地址 (默认: 127.0.0.1:1080): " H_OUTBOUND_ADDR_INPUT
         H_OUTBOUND_ADDR=${H_OUTBOUND_ADDR_INPUT:-"127.0.0.1:1080"}
@@ -1297,16 +1272,13 @@ install_hysteria() {
         H_OUTBOUND_USER=""
         H_OUTBOUND_PASS=""
     fi
-
     # 4. 安装执行 - V5.39: 为这部分设置 trap
     local rollback_files=()
     # V5.39: 在安装执行部分开始时设置 trap
     trap 'rollback_install "${rollback_files[@]}"; exit 1' ERR
-
     download_and_install; rollback_files+=("$BINARY_PATH")
     create_config_file; rollback_files+=("$CONFIG_FILE")
     create_systemd_service; rollback_files+=("$SYSTEMD_SERVICE")
-
     log "INFO" "正在启动 Hysteria2 服务..." "$BLUE"; systemctl start "$SERVICE_NAME"
     log "INFO" "等待 5 秒检查服务状态..." "$YELLOW"; sleep 5
     if systemctl is-active --quiet "$SERVICE_NAME"; then
@@ -1326,7 +1298,6 @@ install_hysteria() {
     # V5.39: 清除 trap，避免在函数正常结束时误触发
     trap - ERR
 }
-
 
 # --- 主函数 (V5.10 修正后的流程控制) ---
 # V5.38: 修正 main 函数，将语言选择和流程控制放在最前面
