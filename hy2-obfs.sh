@@ -87,7 +87,7 @@ log() {
 
 validate_port() {
     local port=$1
-    if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+    if ! [[ "$port" =~ ^[0-9]+$ ]] || [[ "$port" -lt 1 ]] || [[ "$port" -gt 65535 ]]; then
         log "ERROR" "端口 $port 无效，必须在 1-65535 之间。" "$RED"
         return 1
     fi
@@ -847,9 +847,9 @@ generate_client_config() {
     fi
 
     # --- 5. 格式化输出 ---
-    echo -e "\n${GREEN}=======================${NC}"
+    echo -e "\n${GREEN}==============================================${NC}"
     log "$(get_msg 'client_config_info')" "$GREEN"
-    echo -e "${GREEN}=======================${NC}"
+    echo -e "${GREEN}==============================================${NC}"
     echo -e " 域名/IP: $H_DOMAIN"
     echo -e " 端口: $PORT_PART"
     echo -e " 密码: $H_PASSWORD"
@@ -893,7 +893,7 @@ generate_client_config() {
     else
         log "ERROR" "错误：无法生成 Hysteria2 CLI YAML 配置" "$RED"
     fi
-    echo -e "${GREEN}=======================${NC}"
+    echo -e "${GREEN}==============================================${NC}"
 
     # 配置防火墙（端口跳跃）
     configure_firewall
@@ -979,14 +979,13 @@ manage_menu() {
 }
 
 install_hysteria() {
-    # V5.39: 将 trap 和 rollback_files 的管理移到函数内部，但只覆盖关键的、可能失败的步骤组合
-    # 初始步骤（依赖检查、域名检测）失败时直接退出，不走回滚
     check_dependencies
     detect_existing_domain
     local CERT_DIR_BASE="$CONFIG_DIR/certs"
     local NUM_CHOICES=2
     local AUTO_EXISTING_CERT="false"
-    # 1. V5.11 优化：检查是否可以自动选择现有证书
+
+    # --- 自动使用现有证书 ---
     if [ -d "$CERT_DIR_BASE" ] && [ -n "$EXISTING_DOMAIN" ]; then
         CERT_PATH="$CONFIG_DIR/certs/$EXISTING_DOMAIN/fullchain.pem"
         KEY_PATH="$CONFIG_DIR/certs/$EXISTING_DOMAIN/privkey.pem"
@@ -996,26 +995,30 @@ install_hysteria() {
             H_DOMAIN="$EXISTING_DOMAIN"
             log "INFO" "检测到本地证书域名: ${H_DOMAIN}，已自动选择 '使用本地现有证书'。" "$GREEN"
             H_EMAIL=""
-            # V5.35: 对于现有证书，设置 H_INSECURE
             H_INSECURE="true"
         fi
     fi
-    # 2. 如果未自动选择，则显示菜单并手动输入
+
     if [ "$AUTO_EXISTING_CERT" = "false" ]; then
-        echo -e "\n$$ {GREEN} $$(get_msg 'select_cert_method')${NC}"
+        echo -e "\n${GREEN}$(get_msg 'select_cert_method')${NC}"
         echo -e "$(get_msg 'cert_method_internal')"
         echo -e "$(get_msg 'cert_method_acmesh')"
         if [ -d "$CERT_DIR_BASE" ]; then
             NUM_CHOICES=3
             echo -e "$(get_msg 'cert_method_existing')"
         fi
-        read -p "Your choice [1-$$ NUM_CHOICES]: " cert_choice; cert_choice= $${cert_choice:-1}
-        if [ "$cert_choice" = "2" ]; then CERT_METHOD="acme_sh";
-        elif [ "$cert_choice" = "3" ]; then CERT_METHOD="existing";
-        else CERT_METHOD="internal_acme"; fi
-        # 域名输入
+        read -p "Your choice [1-${NUM_CHOICES}]: " 
+        cert_choice
+        cert_choice=${cert_choice:-1}          # ← 修正：去掉多余的 $$
+        case "$cert_choice" in
+            2) CERT_METHOD="acme_sh" ;;
+            3) CERT_METHOD="existing" ;;
+            *) CERT_METHOD="internal_acme" ;;
+        esac
+
+        # --- 域名输入 ---
         while true; do
-            local DEFAULT_DOMAIN="$$ {EXISTING_DOMAIN:- $$(hostname -f)}"
+            local DEFAULT_DOMAIN="${EXISTING_DOMAIN:-$(hostname -f)}"
             if [ "$CERT_METHOD" = "existing" ] && [ -n "$EXISTING_DOMAIN" ]; then
                 read -p "$(get_msg 'input_domain' "$EXISTING_DOMAIN")" H_DOMAIN_INPUT
                 H_DOMAIN=${H_DOMAIN_INPUT:-$EXISTING_DOMAIN}
@@ -1026,13 +1029,15 @@ install_hysteria() {
                 read -p "$(get_msg 'input_domain_no_default')" H_DOMAIN_INPUT
                 H_DOMAIN=$H_DOMAIN_INPUT
             fi
-            if [ -z "$H_DOMAIN" ]; then echo "错误: 域名不能为空!"; continue; fi
+            [ -z "$H_DOMAIN" ] && { echo "错误: 域名不能为空!"; continue; }
             validate_domain "$H_DOMAIN"
             break
         done
-        # 邮箱输入
+
+        # --- 邮箱输入 ---
         if [ "$CERT_METHOD" != "existing" ]; then
-            read -p "$(get_msg 'input_email' "$$ H_DOMAIN")" H_EMAIL; H_EMAIL= $${H_EMAIL:-"admin@$H_DOMAIN"}
+            read -p "$(get_msg 'input_email' "$H_DOMAIN")" H_EMAIL
+            H_EMAIL=${H_EMAIL:-"admin@$H_DOMAIN"}   # ← 修正：去掉多余的 $$
         else
             H_EMAIL=""
         fi
@@ -1056,7 +1061,7 @@ install_hysteria() {
                         log "ERROR" "acme.sh 安装失败！请检查网络连接。" "$RED"
                         exit 1
                     fi
-                    if [ "$install_success" = true ]; then
+                    if [ "$install_success" = "true " ]; then
                         # 自动验证安装
                         if [ -x "$HOME/.acme.sh/acme.sh" ]; then
                             log "INFO" "acme.sh 安装并验证成功。" "$GREEN"
@@ -1226,20 +1231,25 @@ install_hysteria() {
         fi
     fi
     # 3. 输入剩余配置（后续逻辑保持不变，省略以聚焦修正）
-    read -p "$$ (get_msg 'input_port')" H_PORT; H_PORT= $${H_PORT:-443}
+    read -p "$(get_msg 'input_port')" H_PORT
+    H_PORT=${H_PORT:-443}
     validate_port "$H_PORT" || exit 1
-    read -s -p "$$ (get_msg 'input_password')" H_PASSWORD; echo; H_PASSWORD= $${H_PASSWORD:-$(openssl rand -hex 16)}
-    read -p "$$ (get_msg 'confirm_obfs')" obfs_choice; obfs_choice= $${obfs_choice:-Y}
-    if [[ "$$ obfs_choice" =~ ^[yY] $$ ]]; then
+    read -s -p "$(get_msg 'input_password')" H_PASSWORD; echo
+    H_PASSWORD=${H_PASSWORD:-$(openssl rand -hex 16)}
+    read -p "$(get_msg 'confirm_obfs')" obfs_choice
+    obfs_choice=${obfs_choice:-Y}
+    if [[ "$obfs_choice" =~ ^[yY]$ ]]; then
         H_ENABLE_OBFS="true"
         H_ENABLE_PORT_HOP="false" # 强制禁用端口跳跃
         log "INFO" "注意：启用混淆后，端口跳跃功能已被禁用。" "$YELLOW"
         read -s -p "$(get_msg 'input_obfs_password')" H_OBFS_PASSWORD; echo
-        H_OBFS_PASSWORD=$$ {H_OBFS_PASSWORD:- $$(openssl rand -hex 16)}
+        echo
+        H_OBFS_PASSWORD=${H_OBFS_PASSWORD:-$(openssl rand -hex 16)}
     else
         H_ENABLE_OBFS="false"; H_OBFS_PASSWORD=""
-        read -p "$$ (get_msg 'confirm_port_hop')" hop_choice; hop_choice= $${hop_choice:-Y}
-        if [[ "$$ hop_choice" =~ ^[yY] $$ ]]; then
+        read -p "$(get_msg 'confirm_port_hop')" hop_choice
+        hop_choice=${hop_choice:-Y}
+        if [[ "$hop_choice" =~ ^[yY]$ ]]; then
             H_ENABLE_PORT_HOP="true"
             read -p "$(get_msg 'input_port_hop_range')" H_PORT_HOP_RANGE
             H_PORT_HOP_RANGE=${H_PORT_HOP_RANGE:-"40000-60000"}
@@ -1248,17 +1258,18 @@ install_hysteria() {
             H_ENABLE_PORT_HOP="false"; H_PORT_HOP_RANGE=""
         fi
     fi
-    read -p "$$ (get_msg 'input_masquerade_url')" H_MASQUERADE_URL; H_MASQUERADE_URL= $${H_MASQUERADE_URL:-"https://www.tencent.com"}
+    read -p "$(get_msg 'input_masquerade_url')" H_MASQUERADE_URL
+    H_MASQUERADE_URL=${H_MASQUERADE_URL:-"https://www.tencent.com"}
     # V5.52: 询问 QUIC 优化
     read -p "是否启用 QUIC 优化参数? (默认: Y) [Y/n]: " quic_opt_choice; quic_opt_choice=${quic_opt_choice:-Y}
-    [[ "$$ quic_opt_choice" =~ ^[yY] $$ ]] && H_ENABLE_QUIC_OPT="true" || H_ENABLE_QUIC_OPT="false"
+    [[ "$quic_opt_choice" =~ ^[yY]$ ]] && H_ENABLE_QUIC_OPT="true" || H_ENABLE_QUIC_OPT="false"
     # V5.52: 询问 SpeedTest
     read -p "是否启用 SpeedTest 功能? (默认: N) [y/N]: " speed_test_choice; speed_test_choice=${speed_test_choice:-N}
-    [[ "$$ speed_test_choice" =~ ^[yY] $$ ]] && H_ENABLE_SPEED_TEST="true" || H_ENABLE_SPEED_TEST="false"
+    [[ "$speed_test_choice" =~ ^[yY]$ ]] && H_ENABLE_SPEED_TEST="true" || H_ENABLE_SPEED_TEST="false"
     read -p "是否启用协议嗅探? (用于基于域名的路由, 默认: N) [Y/n]: " sniffing_choice; sniffing_choice=${sniffing_choice:-N} # V5.50: 默认为 N
-    [[ "$$ sniffing_choice" =~ ^[yY] $$ ]] && H_ENABLE_SNIFFING="true" || H_ENABLE_SNIFFING="false"
+    [[ "$sniffing_choice" =~ ^[yY]$ ]] && H_ENABLE_SNIFFING="true" || H_ENABLE_SNIFFING="false"
     read -p "是否配置 SOCKS5 出站代理? (例如: 用于解锁流媒体, 默认: N) [y/N]: " outbound_choice; outbound_choice=${outbound_choice:-N}
-    if [[ "$$ outbound_choice" =~ ^[yY] $$ ]]; then
+    if [[ "$outbound_choice" =~ ^[yY]$ ]]; then
         H_ENABLE_OUTBOUND="true"
         read -p "请输入 SOCKS5 代理地址 (默认: 127.0.0.1:1080): " H_OUTBOUND_ADDR_INPUT
         H_OUTBOUND_ADDR=${H_OUTBOUND_ADDR_INPUT:-"127.0.0.1:1080"}
