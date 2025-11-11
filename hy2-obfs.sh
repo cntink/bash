@@ -1349,7 +1349,7 @@ main() {
         echo -e "${YELLOW}1) 中文 (Chinese)${NC}"
         echo -e "${YELLOW}2) English${NC}"
         read -p "Enter choice [1-2] (default: 1): " lang_choice
-        case $lang_choice 在
+        case $lang_choice in
             2) echo "en" > "$LANG_FILE" ;;
             *) echo "zh" > "$LANG_FILE" ;; # 默认中文
         esac
