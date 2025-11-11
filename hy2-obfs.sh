@@ -1076,7 +1076,7 @@ install_hysteria() {
                     fi
 
                     # 执行安装命令并检查结果
-                    if ! $_get_cmd https://raw.githubusercontent.com/acmesh-official/acme.sh/master/acme.sh | sh -s -- --install-online $_email_arg; then
+                    if ! curl https://get.acme.sh | sh -s email=$H_EMAIL; then
                         log "ERROR" "acme.sh 安装失败！请检查网络连接或手动安装 acme.sh。" "$RED"
                         exit 1
                     fi
