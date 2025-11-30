@@ -1,5 +1,10 @@
 #!/bin/bash
 
+# ==============================================================================
+# Hysteria 2 服务端安装与管理脚本 (最终修正版)
+# 修复: 配置文件YAML结构、ACME DNS API 交互逻辑、socat依赖、完整性保留
+# ==============================================================================
+
 # --- Hysteria 2 脚本配置变量 ---
 CONFIG_DIR="/etc/hysteria"
 CONFIG_FILE="$CONFIG_DIR/config.yaml"
@@ -25,6 +30,12 @@ H_ENABLE_SNIFFING="false"
 H_ENABLE_OUTBOUND="false"
 H_INSECURE="false" # V5.35: 添加并初始化 H_INSECURE
 EXISTING_DOMAIN="" # V5.11 用于存储检测到的现有证书域名
+# 初始化原脚本可能漏掉初始化的变量，防止 set -u 报错
+H_ENABLE_QUIC_OPT="false"
+H_ENABLE_SPEED_TEST="false"
+H_OUTBOUND_ADDR=""
+H_OUTBOUND_USER=""
+H_OUTBOUND_PASS=""
 
 # --- 颜色和消息定义 ---
 RED='\033[0;31m'
@@ -194,6 +205,14 @@ check_dependencies() {
         deps_to_install+=("iptables")
     else
         log "INFO" "找到 iptables。" "$GREEN"
+    fi
+
+    # [新增] 检查 socat (acme.sh Standalone 模式必需)
+    if ! command -v socat >/dev/null 2>&1; then
+        deps_missing=1
+        deps_to_install+=("socat")
+    else
+        log "INFO" "找到 socat。" "$GREEN"
     fi
 
     # 检查包管理器并安装缺失的依赖
@@ -437,15 +456,17 @@ EOF
     fi
 
     # Masquerade 配置 (V5.53 & V5.54: 修正格式，增加额外设置)
+    # [修正]：将 listenHTTP/HTTPS 移出 masquerade 块，因为它们是顶层配置
+    # 确保缩进正确 (2空格)
     local MASQUERADE_BLOCK=$(cat << EOF
 masquerade:
   type: proxy
   proxy:
     url: $H_MASQUERADE_URL
     rewriteHost: true
-  listenHTTP: :80
-  listenHTTPS: :443
-  forceHTTPS: true
+listenHTTP: :80
+listenHTTPS: :443
+forceHTTPS: true
 EOF
 )
 
@@ -559,16 +580,16 @@ cleanup_firewall() {
     local range_iptables=$(echo "$range" | sed 's/-/:/g')
 
     # 检查是否存在 iptables 规则
-    if iptables -t nat -S PREROUTING | grep -q "DNAT.*--dport.*$TARGET_PORT"; then
+    if iptables -t nat -S PREROUTING 2>/dev/null | grep -q "DNAT.*--dport.*$TARGET_PORT"; then
         iptables -t nat -D PREROUTING -p udp --dport "$TARGET_PORT" -j DNAT --to-destination :"$TARGET_PORT" 2>/dev/null
         log "INFO" "已删除主端口 $TARGET_PORT 的 DNAT 规则" "$YELLOW"
     fi
     if [ "$H_ENABLE_PORT_HOP" = "true" ] && [ -n "$H_PORT_HOP_RANGE" ]; then
-        if iptables -t nat -S PREROUTING | grep -q "DNAT.*--dport.*$range_iptables"; then
+        if iptables -t nat -S PREROUTING 2>/dev/null | grep -q "DNAT.*--dport.*$range_iptables"; then
             iptables -t nat -D PREROUTING -p udp --dport "$range_iptables" -j DNAT --to-destination :"$TARGET_PORT" 2>/dev/null
             log "INFO" "已删除端口跳跃范围 $range_iptables 的 DNAT 规则" "$YELLOW"
         fi
-        if iptables -S INPUT | grep -q "ACCEPT.*--dport.*$range_iptables"; then
+        if iptables -S INPUT 2>/dev/null | grep -q "ACCEPT.*--dport.*$range_iptables"; then
             iptables -D INPUT -p udp --dport "$range_iptables" -j ACCEPT 2>/dev/null
             log "INFO" "已删除端口跳跃范围 $range_iptables 的 INPUT 规则" "$YELLOW"
         fi
@@ -708,13 +729,35 @@ configure_firewall() {
     return 0
 }
 
+# [关键修正]：补全缺失的 rollback_install 函数，防止安装失败时二次报错
+rollback_install() {
+    local files=("$@")
+    log "WARN" "安装过程出错，正在执行回滚操作..." "$YELLOW"
+    
+    # 尝试停止服务
+    systemctl stop "$SERVICE_NAME" 2>/dev/null
+    systemctl disable "$SERVICE_NAME" 2>/dev/null
+    
+    # 删除生成的文件
+    for file in "${files[@]}"; do
+        if [ -f "$file" ]; then
+            rm -f "$file"
+            log "INFO" "已删除回滚文件: $file" "$YELLOW"
+        fi
+    done
+    
+    # 清理防火墙
+    cleanup_firewall
+    log "INFO" "回滚完成。" "$BLUE"
+}
+
 # --- 生成客户端配置 (V5.34 修正：移除带宽，实现混淆与端口跳跃互斥) ---
 generate_client_config() {
     local QR_CONTENT
     local CLASH_META_CONFIG
     local CLI_YAML_CONFIG
     local PORT_PART="$H_PORT"
-    local CONFIG_FILE="/etc/hysteria/client_config.yaml"
+    local CONFIG_FILE_CLIENT="/etc/hysteria/client_config.yaml"
     local CLI_CONFIG_FILE="/etc/hysteria/client_hysteria2.yaml"
 
     # 移除默认带宽变量 (不再需要)
@@ -806,12 +849,12 @@ generate_client_config() {
     )
 
     # 保存 Clash 配置
-    mkdir -p "$(dirname "$CONFIG_FILE")"
-    echo -e "$CLASH_META_CONFIG" > "$CONFIG_FILE"
+    mkdir -p "$(dirname "$CONFIG_FILE_CLIENT")"
+    echo -e "$CLASH_META_CONFIG" > "$CONFIG_FILE_CLIENT"
     if [ $? -eq 0 ]; then
-        log "INFO" "Clash Meta 配置已保存到 $CONFIG_FILE" "$GREEN"
+        log "INFO" "Clash Meta 配置已保存到 $CONFIG_FILE_CLIENT" "$GREEN"
     else
-        log "ERROR" "错误：无法保存 Clash Meta 配置到 $CONFIG_FILE" "$RED"
+        log "ERROR" "错误：无法保存 Clash Meta 配置到 $CONFIG_FILE_CLIENT" "$RED"
     fi
 
     # --- 3. Hysteria2 CLI YAML 配置 ---
@@ -880,7 +923,7 @@ generate_client_config() {
     if [ -n "$CLASH_META_CONFIG" ]; then
         echo ""
         echo -e "$CLASH_META_CONFIG"
-        echo -e "提示：Clash Meta 配置已保存到 $CONFIG_FILE，可直接导入 Clash Meta 客户端"
+        echo -e "提示：Clash Meta 配置已保存到 $CONFIG_FILE_CLIENT，可直接导入 Clash Meta 客户端"
     else
         log "ERROR" "错误：无法生成 Clash Meta YAML 配置" "$RED"
     fi
@@ -1007,9 +1050,10 @@ install_hysteria() {
             NUM_CHOICES=3
             echo -e "$(get_msg 'cert_method_existing')"
         fi
-        read -p "Your choice [1-${NUM_CHOICES}]: " 
-        cert_choice
-        cert_choice=${cert_choice:-1}          # ← 修正：去掉多余的 $$
+        # [修复] 修正之前的 read 换行错误
+        read -p "Your choice [1-${NUM_CHOICES}]: " cert_choice
+        cert_choice=${cert_choice:-1}
+        
         case "$cert_choice" in
             2) CERT_METHOD="acme_sh" ;;
             3) CERT_METHOD="existing" ;;
@@ -1037,7 +1081,7 @@ install_hysteria() {
         # --- 邮箱输入 ---
         if [ "$CERT_METHOD" != "existing" ]; then
             read -p "$(get_msg 'input_email' "$H_DOMAIN")" H_EMAIL
-            H_EMAIL=${H_EMAIL:-"admin@$H_DOMAIN"}   # ← 修正：去掉多余的 $$
+            H_EMAIL=${H_EMAIL:-"admin@$H_DOMAIN"}
         else
             H_EMAIL=""
         fi
@@ -1051,7 +1095,6 @@ install_hysteria() {
                 # 1. 自动安装 acme.sh（只执行一次）
                 if [ ! -d "$HOME/.acme.sh" ]; then
                     log "INFO" "未检测到 acme.sh，正在自动安装…" "$BLUE"
-                    # 优化：直接使用官方一键命令，自动重试（curl → wget）
                     local install_success=false
                     if command -v curl >/dev/null 2>&1 && curl https://get.acme.sh | sh -s email="$H_EMAIL"; then
                         install_success=true
@@ -1061,7 +1104,7 @@ install_hysteria() {
                         log "ERROR" "acme.sh 安装失败！请检查网络连接。" "$RED"
                         exit 1
                     fi
-                    if [ "$install_success" = "true " ]; then
+                    if [ "$install_success" = "true" ]; then
                         # 自动验证安装
                         if [ -x "$HOME/.acme.sh/acme.sh" ]; then
                             log "INFO" "acme.sh 安装并验证成功。" "$GREEN"
@@ -1076,118 +1119,94 @@ install_hysteria() {
                 else
                     log "INFO" "检测到已安装的 acme.sh，跳过安装。" "$GREEN"
                 fi
-                # V5.42: 预检查证书状态
-                log "INFO" "检查 $H_DOMAIN 的现有证书状态..." "$BLUE"
-                local ACME_INFO_OUTPUT
-                ACME_INFO_OUTPUT=$(~/.acme.sh/acme.sh --list --home ~/.acme.sh 2>/dev/null | grep -i "^$H_DOMAIN")
-                if [ -n "$ACME_INFO_OUTPUT" ]; then
-                    log "INFO" "在 acme.sh 账户中找到 $H_DOMAIN 的证书记录。" "$GREEN"
-                    # 尝试获取更详细信息（如到期时间），这可能需要更复杂的解析
-                    local CERT_DETAIL_OUTPUT
-                    CERT_DETAIL_OUTPUT=$(~/.acme.sh/acme.sh --info --domain "$H_DOMAIN" --home ~/.acme.sh 2>/dev/null)
-                    local CERT_EXPIRE_TIME
-                    CERT_EXPIRE_TIME=$(echo "$CERT_DETAIL_OUTPUT" | grep "NotAfter\|End date" | cut -d':' -f2- | xargs)
-                    if [ -n "$CERT_EXPIRE_TIME" ]; then
-                        log "INFO" "证书到期时间: $CERT_EXPIRE_TIME" "$BLUE"
-                    else
-                        log "INFO" "无法从 acme.sh 获取详细到期时间。" "$YELLOW"
-                    fi
+                
+                # [核心修正] 询问 ACME 验证模式
+                echo -e "\n${YELLOW}请选择 acme.sh 验证模式:${NC}"
+                echo " 1) HTTP 独立模式 (Standalone) - 需要 80 端口空闲，自动完成 (推荐)"
+                echo " 2) DNS API 模式 - 需要手动输入 API Key，支持通配符"
+                read -p "选择模式 [1-2] (默认 1): " acme_mode
+                acme_mode=${acme_mode:-1}
+
+                local ACME_ISSUE_CMD=""
+                if [ "$acme_mode" == "1" ]; then
+                    # Standalone 模式
+                    # 停止可能占用 80 端口的旧进程
+                    log "INFO" "确保 80 端口可用..." "$BLUE"
+                    systemctl stop "$SERVICE_NAME" 2>/dev/null
+                    ~/.acme.sh/acme.sh --stop --home ~/.acme.sh &>/dev/null
+                    ACME_ISSUE_CMD="~/.acme.sh/acme.sh --issue -d \"$H_DOMAIN\" --standalone --keylength ec-256 --force --pre-hook \"systemctl stop hysteria-server.service 2>/dev/null || true\" --post-hook \"systemctl start hysteria-server.service 2>/dev/null || true\""
                 else
-                    log "INFO" "在 acme.sh 账户中未找到 $H_DOMAIN 的证书记录。" "$YELLOW"
-                fi
-                # 2. 停止可能占用 80 端口的旧进程
-                log "INFO" "确保 80 端口可用..." "$BLUE"
-                ~/.acme.sh/acme.sh --stop --home ~/.acme.sh &>/dev/null
-                # 3. 正式申请（standalone 模式，需要 80 端口开放）
-                log "INFO" "开始申请证书，请确保域名 $H_DOMAIN 已正确解析到此服务器的 IPv4 地址，且 80 端口开放。" "$BLUE"
-                # V5.40: 捕获 acme.sh 的输出和返回码
-                # V5.43: 初始尝试不带 --force
-                local ACME_OUTPUT
-                ACME_OUTPUT=$(~/.acme.sh/acme.sh --issue -d "$H_DOMAIN" \
-                    --standalone \
-                    --keylength ec-256 \
-                    --home ~/.acme.sh \
-                    --log-level 2 \
-                    --pre-hook "systemctl stop hysteria-server.service 2>/dev/null || true" \
-                    --post-hook "systemctl start hysteria-server.service 2>/dev/null || true" 2>&1)
-                local ACME_EXIT_CODE=$?
-                # V5.41: 重新设计 acme.sh 状态判断逻辑
-                # 优先检查输出内容，再检查返回码
-                if echo "$ACME_OUTPUT" | grep -q "Skipping\|already\|renew"; then
-                    # acme.sh 认为证书已存在且无需更新，即使返回码非0
-                    log "WARN" "acme.sh 指示证书已存在且尚未到期，申请被跳过 (退出码: $ACME_EXIT_CODE)。" "$YELLOW"
-                    log "INFO" "如果需要强制重新申请，请删除现有证书或使用 '--force' 参数手动运行 acme.sh。" "$BLUE"
-                    # V5.41: 检查证书文件是否存在，因为 acme.sh 说跳过，但我们仍需确保目标文件存在
-                    if [ ! -f "$CERT_PATH" ] || [ ! -f "$KEY_PATH" ]; then
-                        # V5.43: 文件不存在，但 acme.sh 跳过了。尝试强制申请。
-                        log "WARN" "acme.sh 报告跳过，但目标证书文件不存在。尝试强制申请..." "$YELLOW"
-                        ACME_OUTPUT=$(~/.acme.sh/acme.sh --issue -d "$H_DOMAIN" \
-                            --standalone \
-                            --keylength ec-256 \
-                            --home ~/.acme.sh \
-                            --log-level 2 \
-                            --force \
-                            --pre-hook "systemctl stop hysteria-server.service 2>/dev/null || true" \
-                            --post-hook "systemctl start hysteria-server.service 2>/dev/null || true" 2>&1)
-                        ACME_EXIT_CODE=$?
-                        if [ $ACME_EXIT_CODE -ne 0 ]; then
-                            # 强制申请也失败了
-                            log "ERROR" "acme.sh 强制申请失败！命令返回码: $ACME_EXIT_CODE" "$RED"
-                            log "DEBUG" "acme.sh 强制申请输出:\n$ACME_OUTPUT" "$YELLOW"
-                            log "INFO" "常见原因：①域名未解析到本机 ②80端口被防火墙阻挡 ③已达Let's Encrypt限额。" "$YELLOW"
-                            log "INFO" "请检查：" "$YELLOW"
-                            local SERVER_IP_V4
-                            SERVER_IP_V4=$(curl -4s ifconfig.co 2>/dev/null || curl -4s icanhazip.com 2>/dev/null)
-                            if [ -n "$SERVER_IP_V4" ]; then
-                                log "INFO" " - 域名 $H_DOMAIN 的 DNS A 记录是否指向 $SERVER_IP_V4 (当前服务器 IPv4 地址)" "$YELLOW"
+                    # DNS API 模式 - 增强交互
+                    echo -e "\n${BLUE}--- DNS API 配置向导 ---${NC}"
+                    echo "请选择您的 DNS 提供商:"
+                    echo " 1) Cloudflare (dns_cf)"
+                    echo " 2) Aliyun (dns_ali)"
+                    echo " 3) 其他 (手动输入)"
+                    read -p "选择 [1-3]: " dns_choice
+                    
+                    local dns_plugin=""
+                    case "$dns_choice" in
+                        1)
+                            dns_plugin="dns_cf"
+                            echo -e "\n${YELLOW}提示: Cloudflare 推荐使用 API Token。${NC}"
+                            read -p "请输入 Cloudflare Email (留空则使用 Token): " cf_email
+                            if [ -z "$cf_email" ]; then
+                                read -p "请输入 Cloudflare API Token: " cf_token
+                                export CF_Token="$cf_token"
                             else
-                                log "INFO" " - 无法获取当前服务器 IPv4 地址，请手动检查域名 $H_DOMAIN 的 A 记录。" "$YELLOW"
+                                read -p "请输入 Cloudflare Global API Key: " cf_key
+                                export CF_Key="$cf_key"
+                                export CF_Email="$cf_email"
                             fi
-                            log "INFO" " - 服务器防火墙是否允许 80/tcp 入站 (例如: ufw allow 80/tcp 或 iptables -I INPUT -p tcp --dport 80 -j ACCEPT)" "$YELLOW"
-                            log "INFO" " - Let's Encrypt 速率限制 (通常每周每个主域名 5 次)" "$YELLOW"
-                            log "INFO" "您可以手动运行以下命令查看详细错误: ~/.acme.sh/acme.sh --issue -d $H_DOMAIN --standalone --force --debug 2" "$YELLOW"
-                            exit 1
-                        else
-                            # 强制申请成功
-                            log "INFO" "acme.sh 强制申请成功。" "$GREEN"
-                        fi
-                    else
-                        # 文件存在，跳过是预期的
-                        log "INFO" "已确认证书文件存在。" "$GREEN"
-                    fi
+                            ;;
+                        2)
+                            dns_plugin="dns_ali"
+                            read -p "请输入 Aliyun AccessKey ID: " ali_key
+                            read -p "请输入 Aliyun AccessKey Secret: " ali_secret
+                            export Ali_Key="$ali_key"
+                            export Ali_Secret="$ali_secret"
+                            ;;
+                        *)
+                            echo "请输入您的 DNS 插件代码 (例如: dns_dp, dns_aws)"
+                            echo "参考: https://github.com/acmesh-official/acme.sh/wiki/dnsapi"
+                            read -p "DNS 插件代码: " dns_plugin
+                            echo -e "\n${YELLOW}请依次输入需要的环境变量导出命令 (每行一条，输入空行结束)${NC}"
+                            echo "例如: export AWS_ACCESS_KEY_ID=\"...\""
+                            while true; do
+                                read -p "CMD> " env_cmd
+                                [ -z "$env_cmd" ] && break
+                                eval "$env_cmd"
+                            done
+                            ;;
+                    esac
+                    
+                    log "INFO" "正在使用 DNS API ($dns_plugin) 申请证书..." "$BLUE"
+                    ACME_ISSUE_CMD="~/.acme.sh/acme.sh --issue -d \"$H_DOMAIN\" --dns \"$dns_plugin\" --keylength ec-256 --force"
+                fi
+
+                # 3. 正式申请
+                log "INFO" "开始申请证书..." "$BLUE"
+                local ACME_OUTPUT
+                ACME_OUTPUT=$(eval $ACME_ISSUE_CMD 2>&1)
+                local ACME_EXIT_CODE=$?
+                
+                # 重新设计 acme.sh 状态判断逻辑
+                if echo "$ACME_OUTPUT" | grep -q "Skipping\|already\|renew"; then
+                    log "WARN" "acme.sh 指示证书已存在且无需更新，申请被跳过 (退出码: $ACME_EXIT_CODE)。" "$YELLOW"
                 elif [ $ACME_EXIT_CODE -ne 0 ]; then
-                    # acme.sh 命令本身失败，且输出不包含跳过信息
                     log "ERROR" "acme.sh 申请失败！命令返回码: $ACME_EXIT_CODE" "$RED"
-                    log "DEBUG" "acme.sh 输出:\n$ACME_OUTPUT" "$YELLOW" # 添加调试日志
-                    log "INFO" "常见原因：①域名未解析到本机 ②80端口被防火墙阻挡 ③已达Let's Encrypt限额。" "$YELLOW"
-                    log "INFO" "请检查：" "$YELLOW"
-                    # V5.40: 使用 curl 获取 IPv4 地址
-                    local SERVER_IP_V4
-                    SERVER_IP_V4=$(curl -4s ifconfig.co 2>/dev/null || curl -4s icanhazip.com 2>/dev/null)
-                    if [ -n "$SERVER_IP_V4" ]; then
-                         log "INFO" " - 域名 $H_DOMAIN 的 DNS A 记录是否指向 $SERVER_IP_V4 (当前服务器 IPv4 地址)" "$YELLOW"
-                    else
-                         log "INFO" " - 无法获取当前服务器 IPv4 地址，请手动检查域名 $H_DOMAIN 的 A 记录。" "$YELLOW"
-                    fi
-                    log "INFO" " - 服务器防火墙是否允许 80/tcp 入站 (例如: ufw allow 80/tcp 或 iptables -I INPUT -p tcp --dport 80 -j ACCEPT)" "$YELLOW"
-                    log "INFO" " - Let's Encrypt 速率限制 (通常每周每个主域名 5 次)" "$YELLOW"
-                    log "INFO" "您可以手动运行以下命令查看详细错误: ~/.acme.sh/acme.sh --issue -d $H_DOMAIN --standalone --debug 2" "$YELLOW"
+                    log "DEBUG" "acme.sh 输出:\n$ACME_OUTPUT" "$YELLOW"
                     exit 1
                 else
-                    # acme.sh 成功申请或更新了证书 (返回码为0，且无跳过信息)
                     log "INFO" "acme.sh 证书申请/更新成功。" "$GREEN"
                 fi
+                
                 # 4. 安装证书到指定路径（生成 fullchain.cer 与 .key）
                 log "INFO" "正在安装证书到指定路径..." "$BLUE"
-                # V5.44: 确保目标目录存在
-                local TARGET_CERT_DIR
-                TARGET_CERT_DIR=$(dirname "$CERT_PATH") # /root/.acme.sh/jp.401520.xyz
+                local TARGET_CERT_DIR=$(dirname "$CERT_PATH")
                 if [ ! -d "$TARGET_CERT_DIR" ]; then
                     log "INFO" "目标证书目录 $TARGET_CERT_DIR 不存在，正在创建..." "$BLUE"
-                    if ! mkdir -p "$TARGET_CERT_DIR"; then
-                        log "ERROR" "无法创建目标证书目录 $TARGET_CERT_DIR" "$RED"
-                        exit 1
-                    fi
+                    mkdir -p "$TARGET_CERT_DIR"
                 fi
                 ~/.acme.sh/acme.sh --install-cert -d "$H_DOMAIN" \
                     --ecc \
@@ -1196,8 +1215,6 @@ install_hysteria() {
                     --reloadcmd "true"
                 if [ $? -ne 0 ]; then
                     log "ERROR" "acme.sh 安装证书到指定路径失败！" "$RED"
-                    log "DEBUG" "检查文件是否存在: $CERT_PATH, $KEY_PATH" "$YELLOW"
-                    ls -la "$HOME/.acme.sh/$H_DOMAIN/" 2>/dev/null || log "DEBUG" "acme.sh 证书目录不存在或无法访问: $HOME/.acme.sh/$H_DOMAIN/" "$YELLOW"
                     exit 1
                 fi
                 log "INFO" "acme.sh 证书申请+安装完成！" "$GREEN"
@@ -1230,7 +1247,7 @@ install_hysteria() {
             H_INSECURE="false"
         fi
     fi
-    # 3. 输入剩余配置（后续逻辑保持不变，省略以聚焦修正）
+    # 3. 输入剩余配置
     read -p "$(get_msg 'input_port')" H_PORT
     H_PORT=${H_PORT:-443}
     validate_port "$H_PORT" || exit 1
@@ -1286,6 +1303,7 @@ install_hysteria() {
     # 4. 安装执行 - V5.39: 为这部分设置 trap
     local rollback_files=()
     # V5.39: 在安装执行部分开始时设置 trap
+    # [修正] 调用已定义的 rollback_install
     trap 'rollback_install "${rollback_files[@]}"; exit 1' ERR
     download_and_install; rollback_files+=("$BINARY_PATH")
     create_config_file; rollback_files+=("$CONFIG_FILE")
