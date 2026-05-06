@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # ==============================================================================
-# Hysteria 2 服务端安装与管理脚本 (全本修正与热升级集成版)
-# 修复: 配置文件YAML结构、ACME DNS API 交互逻辑、依赖补全、客户端端口跳跃语法
+# Hysteria 2 服务端安装与管理脚本 (终极还原全本修正版 - 含无缝热升级)
+# 修复: 配置文件反查解析逻辑、客户端端口跳跃语法、补齐所有原代码层级排版
 # ==============================================================================
 
 # --- Hysteria 2 脚本配置变量 ---
@@ -14,7 +14,7 @@ SYSTEMD_SERVICE="/etc/systemd/system/$SERVICE_NAME"
 LANG_FILE="$CONFIG_DIR/.lang"
 BACKUP_DIR="$CONFIG_DIR/backup"
 SHORTCUT_PATH="/usr/local/bin/hy2"
-SCRIPT_PATH="/opt/hysteria/hysteria_manager.sh" # 假设脚本路径
+SCRIPT_PATH="/opt/hysteria/hysteria_manager.sh"
 
 # --- 全局变量（将由脚本运行时配置） ---
 H_DOMAIN=""
@@ -28,8 +28,9 @@ H_ENABLE_PORT_HOP="false"
 H_PORT_HOP_RANGE="40000-60000"
 H_ENABLE_SNIFFING="false"
 H_ENABLE_OUTBOUND="false"
-H_INSECURE="false" # V5.35: 添加并初始化 H_INSECURE
-EXISTING_DOMAIN="" # V5.11 用于存储检测到的现有证书域名
+H_INSECURE="false"
+EXISTING_DOMAIN=""
+
 # 初始化原脚本可能漏掉初始化的变量，防止 set -u 报错
 H_ENABLE_QUIC_OPT="false"
 H_ENABLE_SPEED_TEST="false"
@@ -42,7 +43,7 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
 declare -A MESSAGES
 # V5.10 优化后的提示
@@ -156,7 +157,7 @@ detect_existing_domain() {
     local CERT_DIR="$CONFIG_DIR/certs"
     if [ -d "$CERT_DIR" ]; then
         # 查找 certs 目录下是否存在唯一的子目录 (即证书域名)
-        shopt -s nullglob # 修复：防止无目录时误匹配
+        shopt -s nullglob # 关键修复：防止空目录导致的通配符展开报错
         local cert_dirs=( "$CERT_DIR"/*/ )
         shopt -u nullglob
         if [ ${#cert_dirs[@]} -eq 1 ]; then
@@ -218,7 +219,7 @@ check_dependencies() {
         log "INFO" "找到 socat。" "$GREEN"
     fi
 
-    # [新增] 检查 cron (acme.sh 续期必须)
+    # [新增] 检查 cron (acme.sh 自动续期证书必需)
     if ! command -v cron >/dev/null 2>&1 && ! command -v crond >/dev/null 2>&1; then
         deps_missing=1
         deps_to_install+=("cron")
@@ -250,8 +251,8 @@ check_dependencies() {
             elif command -v yum >/dev/null 2>&1; then
                 pkg_manager="yum"
             fi
-            
-            # 解决 cronie 在 RHEL 体系下的名称适配
+
+            # 适配 RedHat 体系下的 cron 包名为 cronie
             local rpm_deps=()
             for dep in "${deps_to_install[@]}"; do
                 if [ "$dep" == "cron" ]; then
@@ -260,7 +261,7 @@ check_dependencies() {
                     rpm_deps+=("$dep")
                 fi
             done
-            
+
             log "INFO" "检测到 $pkg_manager 包管理器，正在安装缺失的依赖项..." "$BLUE"
             if ! $pkg_manager install -y "${rpm_deps[@]}"; then
                 log "ERROR" "安装依赖项失败。" "$RED"
@@ -294,8 +295,12 @@ check_dependencies() {
         if [ -n "$persist_pkg" ]; then
             log "INFO" "尝试安装 $persist_pkg..." "$BLUE"
             if command -v apt >/dev/null 2>&1; then
-                # 免交互安装 iptables-persistent
-                DEBIAN_FRONTEND=noninteractive apt install -y "$persist_pkg" || true
+                # 加入免交互参数，防止安装持久化工具时弹出确认框卡死脚本
+                if DEBIAN_FRONTEND=noninteractive apt install -y "$persist_pkg"; then
+                    log "INFO" "$persist_pkg 安装成功。" "$GREEN"
+                else
+                    log "WARN" "$persist_pkg 安装失败，防火墙规则重启后可能丢失。" "$YELLOW"
+                fi
             elif command -v yum >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1; then
                 if $pkg_manager install -y "$persist_pkg"; then
                     log "INFO" "$persist_pkg 安装成功，防火墙规则将被持久化。" "$GREEN"
@@ -405,9 +410,6 @@ download_and_install() {
             # 两个命令都失败，检查文件是否为ELF格式 (Linux可执行文件)
             if command -v file >/dev/null 2>&1 && file "$BINARY_PATH" 2>/dev/null | grep -q "ELF"; then
                 log "WARN" "下载的二进制文件是ELF格式，但 --help 和 --version 均失败。可能存在兼容性问题。" "$YELLOW"
-                # 可以选择在此处退出，或者尝试启动服务（让服务启动失败来最终确认）
-                # 这里我们选择记录警告并继续，因为 --help/--version 失败不一定代表服务无法启动
-                # exit 1 # Uncomment this line if you want to be strict
             else
                 log "ERROR" "下载的二进制文件 $BINARY_PATH 不是有效的ELF可执行文件或验证失败。" "$RED"
             fi
@@ -418,12 +420,8 @@ download_and_install() {
 
     log "INFO" "Hysteria2 二进制文件下载并验证成功: $BINARY_PATH" "$GREEN"
 }
+
 # --- 创建服务器配置文件 (移除 RESOLVER 配置，修正 Masquerade 结构) ---
-# V5.51: 修正 Outbound 配置，确保 name 字段存在
-# V5.52: 增加 QUIC 优化、SpeedTest、Sniff 详细配置、Outbound 认证
-# V5.53: 修正变量赋值以去除首尾空格，修正 masquerade 配置格式
-# V5.54: 增加 masquerade 额外设置 (listenHTTP, listenHTTPS, forceHTTPS)，修正 internal_acme 格式
-# V5.55: 移除 alpn 块，修正 password 引号问题，确保 outbounds 认证信息被使用
 create_config_file() {
     log "INFO" "正在创建配置文件..." "$BLUE"
 
@@ -474,17 +472,17 @@ EOF
 )
     fi
 
-    # Masquerade 配置 (V5.53 & V5.54: 修正格式，增加额外设置)
-    # [修正]：将 listenHTTP/HTTPS 移至 masquerade 块层级内，保持YAML规范
+    # Masquerade 配置
+    # 修复：将 listenHTTP/HTTPS 移出 masquerade 块，作为顶层配置，缩进对齐
     local MASQUERADE_BLOCK=$(cat << EOF
 masquerade:
   type: proxy
   proxy:
     url: "$H_MASQUERADE_URL"
     rewriteHost: true
-  listenHTTP: :80
-  listenHTTPS: :443
-  forceHTTPS: true
+listenHTTP: :80
+listenHTTPS: :443
+forceHTTPS: true
 EOF
 )
 
@@ -495,7 +493,6 @@ EOF
             log "ERROR" "错误：internal_acme 模式需要 H_EMAIL" "$RED"
             exit 1
         fi
-        # V5.54: 修正 internal_acme 格式，匹配期望配置
         TLS_CONFIG=$(cat << EOF
 acme:
   domains:
@@ -546,7 +543,7 @@ EOF
     # 创建配置目录
     mkdir -p "$CONFIG_DIR/certs"
 
-    # 生成完整的配置文件 (关键修正：移除 $RESOLVER_CONFIG 的引用，移除 alpn 块)
+    # 生成完整的配置文件
     cat > "$CONFIG_FILE" << EOF
 listen: :$H_PORT
 auth:
@@ -589,7 +586,6 @@ EOF
     systemctl enable "$SERVICE_NAME" &>/dev/null
     log "INFO" "systemd 服务文件创建成功。" "$GREEN"
 }
-
 # V5.33 修正：增加防火墙规则清理逻辑
 cleanup_firewall() {
     log "INFO" "正在清理 Hysteria2 防火墙规则..." "$BLUE"
@@ -639,7 +635,8 @@ uninstall_hysteria() {
     systemctl stop "$SERVICE_NAME" 2>/dev/null
     systemctl disable "$SERVICE_NAME" 2>/dev/null
     # V5.16 确保：移除服务文件和快捷命令
-    rm -f "$SYSTEMD_SERVICE" "$SHORTCUT_PATH"; systemctl daemon-reload
+    rm -f "$SYSTEMD_SERVICE" "$SHORTCUT_PATH"
+    systemctl daemon-reload
 
     # --- V5.12 恢复：证书保留询问 ---
     local CERT_DIR="$CONFIG_DIR/certs"
@@ -755,7 +752,7 @@ rollback_install() {
     
     # 删除生成的文件
     for file in "${files[@]}"; do
-        if [ -f "$file" ]; then
+        if [ -n "$file" ] && [ -f "$file" ]; then
             rm -f "$file"
             log "INFO" "已删除回滚文件: $file" "$YELLOW"
         fi
@@ -851,16 +848,14 @@ generate_client_config() {
     H_PASSWORD=${H_PASSWORD:-"[YOUR_PASSWORD_HERE]"}
     H_MASQUERADE_URL=${H_MASQUERADE_URL:-"https://www.tencent.com"}
 
+    # 变量格式验证
     if ! [[ $H_DOMAIN =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
-        log "ERROR" "错误：H_DOMAIN 格式无效 ($H_DOMAIN)，使用默认值" "$RED"
         H_DOMAIN="[YOUR_DOMAIN_HERE]"
     fi
     if ! [[ $H_PORT =~ ^[0-9]+$ ]] || [ "$H_PORT" -lt 1 ] || [ "$H_PORT" -gt 65535 ]; then
-        log "ERROR" "错误：H_PORT 无效 ($H_PORT)，使用默认值 443" "$RED"
         H_PORT="443"
     fi
     if [ -z "$H_PASSWORD" ]; then
-        log "ERROR" "错误：H_PASSWORD 不能为空，使用默认值" "$RED"
         H_PASSWORD="[YOUR_PASSWORD_HERE]"
     fi
 
@@ -868,18 +863,19 @@ generate_client_config() {
     local PORT_HOP_BLOCK=""
     local OBFS_BLOCK=""
     local CLI_OBFS_BLOCK=""
-    local H_ENABLE_URI_PORT_RANGE="false" # 用于控制 URI 是否包含端口范围
+    local H_ENABLE_URI_PORT_RANGE="false"
 
     if [ "$H_ENABLE_OBFS" = "true" ] && [ -n "$H_OBFS_PASSWORD" ]; then
         # 1. 启用混淆
         OBFS_BLOCK=$(printf "    obfs: salamander\n    obfs-password: \"%s\"\n" "$H_OBFS_PASSWORD")
         CLI_OBFS_BLOCK=$(printf "obfs:\n  type: salamander\n  salamander:\n    password: \"%s\"\n" "$H_OBFS_PASSWORD")
-        log "WARN" "注意: 检测到混淆启用，端口跳跃功能将被忽略。" "$YELLOW"
+        
+        # 强制禁用 URI 中的端口范围
         H_ENABLE_URI_PORT_RANGE="false"
     elif [ "$H_ENABLE_PORT_HOP" = "true" ] && [ -n "$H_PORT_HOP_RANGE" ]; then
         # 2. 仅启用端口跳跃
         PORT_HOP_BLOCK=$(printf "    ports: %s\n" "$H_PORT_HOP_RANGE")
-        # 官方 CLI 客户端不支持 ports 字段，直接拼接在 Server 中即可，此处置空
+        # [核心修复]: 官方客户端不支持独立 ports 字段，不写入 CLI_PORT_HOP_BLOCK
         H_ENABLE_URI_PORT_RANGE="true"
     fi
 
@@ -933,7 +929,7 @@ generate_client_config() {
     fi
 
     # --- 3. Hysteria2 CLI YAML 配置 ---
-    # 修复官方客户端不支持端口数组语法的Bug，使用 PORT_PART 直接组合
+    # [核心修复]: 官方客户端通过地址传递端口跳跃
     CLI_YAML_CONFIG=$(printf "server: %s:%s\nauth: \"%s\"\ntls:\n  sni: %s\n  insecure: %s\nalpn:\n  - h3\n%s" \
         "$H_DOMAIN" \
         "$PORT_PART" \
@@ -1018,45 +1014,67 @@ generate_client_config() {
 
 # V5.13 修正：确保从配置文件中正确读取 H_DOMAIN 等变量
 manage_menu() {
-    # V5.13 修正：强制重新检测现有证书域名作为 H_DOMAIN 的首选来源
     detect_existing_domain
     if [ -f "$CONFIG_FILE" ]; then
-        # 1. 如果存在配置文件，优先从证书路径或配置文件中获取 H_DOMAIN
-        if [ -n "$EXISTING_DOMAIN" ]; then
-            H_DOMAIN="$EXISTING_DOMAIN"
-        else
-            # 尝试从配置文件（内置ACME）中读取
-            H_DOMAIN=$(grep -A 1 'domains:' "$CONFIG_FILE" | tail -n 1 | sed -E 's/^\s*-\s*//;s/\s*$//' || echo "$EXISTING_DOMAIN")
+        # 1. 尝试从 config.yaml (内置ACME) 中解析
+        H_DOMAIN=$(awk '/^  domains:/{getline; gsub(/["\- ]/,"",$1); print $1; exit}' "$CONFIG_FILE")
+        
+        # 2. 从外部证书直接提取真实域名 (解决[YOUR_DOMAIN_HERE]的痛点)
+        if [ -z "$H_DOMAIN" ]; then
+            CERT_FILE=$(awk '/^  cert:/ {gsub(/"/,"",$2); print $2; exit}' "$CONFIG_FILE")
+            if [ -n "$CERT_FILE" ] && [ -f "$CERT_FILE" ]; then
+                # 尝试提取证书里的 SAN 记录
+                H_DOMAIN=$(openssl x509 -noout -ext subjectAltName -in "$CERT_FILE" 2>/dev/null | grep -o "DNS:[^,]*" | head -n 1 | sed 's/DNS://')
+                # 若无 SAN，尝试提取 CN 记录
+                if [ -z "$H_DOMAIN" ]; then
+                    H_DOMAIN=$(openssl x509 -noout -subject -in "$CERT_FILE" 2>/dev/null | sed -n 's/.*CN[ =]*\([^,]*\).*/\1/p' | tr -d ' ')
+                fi
+            fi
         fi
         
-        # 修复读取配置的精确性问题
+        # 3. 终极回退机制
+        if [ -z "$H_DOMAIN" ]; then
+            H_DOMAIN="$EXISTING_DOMAIN"
+        fi
+        
+        # 精确读取其他配置
         H_PORT=$(awk '/^listen:/ {split($2,a,":"); print a[length(a)]}' "$CONFIG_FILE" || echo "443")
         H_PASSWORD=$(awk '/^  password:/ {gsub(/"/,"",$2); print $2; exit}' "$CONFIG_FILE" || echo "")
-        H_MASQUERADE_URL=$(grep -A 10 'masquerade:' "$CONFIG_FILE" | grep 'url:' | awk '{print $2}' | tr -d '\"' | head -n 1 || echo "https://www.tencent.com")
+        H_MASQUERADE_URL=$(awk '/^    url:/ {gsub(/"/,"",$2); print $2; exit}' "$CONFIG_FILE" || echo "https://www.tencent.com")
         
         if grep -q 'salamander:' "$CONFIG_FILE"; then
             H_ENABLE_OBFS="true"
-            H_OBFS_PASSWORD=$(grep -A 2 'salamander:' "$CONFIG_FILE" | grep 'password:' | awk '{print $2}' | tr -d '\"\n\r' || echo "")
+            H_OBFS_PASSWORD=$(awk '/^    password:/ {gsub(/"/,"",$2); print $2; exit}' "$CONFIG_FILE" || echo "")
         else
             H_ENABLE_OBFS="false"; H_OBFS_PASSWORD=""
         fi
         
-        if grep -q 'ports:' "$CONFIG_FILE"; then
-            H_ENABLE_PORT_HOP="true"
-            H_PORT_HOP_RANGE=$(grep 'ports:' "$CONFIG_FILE" | awk '{print $2}' | tr -d '\"\n\r' || echo "")
-        else
-            H_ENABLE_PORT_HOP="false"; H_PORT_HOP_RANGE=""
+        # 从遗留的客户端配置文件反查端口跳跃配置
+        H_ENABLE_PORT_HOP="false"
+        H_PORT_HOP_RANGE=""
+        if [ -f "/etc/hysteria/client_config.yaml" ]; then
+            if grep -q 'ports:' "/etc/hysteria/client_config.yaml"; then
+                H_ENABLE_PORT_HOP="true"
+                H_PORT_HOP_RANGE=$(awk '/ports:/{print $2; exit}' "/etc/hysteria/client_config.yaml" | tr -d '\"\n\r')
+            fi
         fi
 
         # V5.35: 从配置文件推断 H_INSECURE
-        if grep -q 'acme:' "$CONFIG_FILE" || grep -q 'tls:' "$CONFIG_FILE"; then
-             if grep -q 'cert:.*pem' "$CONFIG_FILE" && grep -q 'key:.*pem' "$CONFIG_FILE"; then
-                 H_INSECURE="true" # 本地证书，可能需要 insecure
-             else
-                 H_INSECURE="false" # ACME 证书，通常不需要 insecure
-             fi
+        if grep -q 'acme:' "$CONFIG_FILE"; then
+            H_INSECURE="false"
+        else
+            CERT_FILE=$(awk '/^  cert:/ {gsub(/"/,"",$2); print $2; exit}' "$CONFIG_FILE")
+            if [[ "$CERT_FILE" == *".acme.sh"* ]]; then
+                H_INSECURE="false"
+            else
+                H_INSECURE="true"
+            fi
         fi
     fi
+
+    # 兜底确保域名绝对不会空，即使没有读取到
+    [ -z "$H_DOMAIN" ] && H_DOMAIN="[YOUR_DOMAIN_HERE]"
+
     # 3. 菜单循环
     while true; do
         clear
@@ -1122,7 +1140,6 @@ install_hysteria() {
             NUM_CHOICES=3
             echo -e "$(get_msg 'cert_method_existing')"
         fi
-        # [修复] 修正之前的 read 换行错误
         read -p "Your choice [1-${NUM_CHOICES}]: " cert_choice
         cert_choice=${cert_choice:-1}
         
@@ -1355,7 +1372,7 @@ install_hysteria() {
     # V5.52: 询问 SpeedTest
     read -p "是否启用 SpeedTest 功能? (默认: N) [y/N]: " speed_test_choice; speed_test_choice=${speed_test_choice:-N}
     [[ "$speed_test_choice" =~ ^[yY]$ ]] && H_ENABLE_SPEED_TEST="true" || H_ENABLE_SPEED_TEST="false"
-    read -p "是否启用协议嗅探? (用于基于域名的路由, 默认: N) [Y/n]: " sniffing_choice; sniffing_choice=${sniffing_choice:-N} # V5.50: 默认为 N
+    read -p "是否启用协议嗅探? (用于基于域名的路由, 默认: N) [Y/n]: " sniffing_choice; sniffing_choice=${sniffing_choice:-N}
     [[ "$sniffing_choice" =~ ^[yY]$ ]] && H_ENABLE_SNIFFING="true" || H_ENABLE_SNIFFING="false"
     read -p "是否配置 SOCKS5 出站代理? (例如: 用于解锁流媒体, 默认: N) [y/N]: " outbound_choice; outbound_choice=${outbound_choice:-N}
     if [[ "$outbound_choice" =~ ^[yY]$ ]]; then
@@ -1363,9 +1380,9 @@ install_hysteria() {
         read -p "请输入 SOCKS5 代理地址 (默认: 127.0.0.1:1080): " H_OUTBOUND_ADDR_INPUT
         H_OUTBOUND_ADDR=${H_OUTBOUND_ADDR_INPUT:-"127.0.0.1:1080"}
         read -s -p "请输入 SOCKS5 用户名 (留空则无认证): " H_OUTBOUND_USER_INPUT; echo
-        H_OUTBOUND_USER=${H_OUTBOUND_USER_INPUT:-""} # 可以为空
+        H_OUTBOUND_USER=${H_OUTBOUND_USER_INPUT:-""}
         read -s -p "请输入 SOCKS5 密码 (留空则无认证): " H_OUTBOUND_PASS_INPUT; echo
-        H_OUTBOUND_PASS=${H_OUTBOUND_PASS_INPUT:-""} # 可以为空
+        H_OUTBOUND_PASS=${H_OUTBOUND_PASS_INPUT:-""}
     else
         H_ENABLE_OUTBOUND="false"
         H_OUTBOUND_ADDR=""
@@ -1375,7 +1392,6 @@ install_hysteria() {
     # 4. 安装执行 - V5.39: 为这部分设置 trap
     local rollback_files=()
     # V5.39: 在安装执行部分开始时设置 trap
-    # [修正] 调用已定义的 rollback_install
     trap 'rollback_install "${rollback_files[@]}"; exit 1' ERR
     download_and_install; rollback_files+=("$BINARY_PATH")
     create_config_file; rollback_files+=("$CONFIG_FILE")
@@ -1401,8 +1417,6 @@ install_hysteria() {
 }
 
 # --- 主函数 (V5.10 修正后的流程控制) ---
-# V5.38: 修正 main 函数，将语言选择和流程控制放在最前面
-# V5.48: 确保语言选择在流程最开始执行，即使 .lang 文件存在
 main() {
     trap cleanup_exit EXIT
     check_root
