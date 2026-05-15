@@ -518,11 +518,26 @@ check_ssl_certificates() {
 # 下载并安装 Hysteria2
 install_hysteria() {
   local max_retries=3 retry_count=0
+  local os arch
+  os=$(uname -s | tr '[:upper:]' '[:lower:]')
+  arch=$(uname -m)
+
+  case "$arch" in
+    x86_64|amd64) arch="amd64" ;;
+    aarch64|arm64) arch="arm64" ;;
+    armv7l) arch="arm" ;;
+    i386|i686) arch="386" ;;
+    *)
+      log "Error: Unsupported architecture $arch / 错误：不支持的架构 $arch" "$RED"
+      exit 1
+      ;;
+  esac
+
   while [[ $retry_count -lt $max_retries ]]; do
     log "$(get_msg download_hy2 "$((retry_count + 1))" "$max_retries")" "$BLUE"
     local version=$(curl -sL --connect-timeout 10 https://api.github.com/repos/apernet/hysteria/releases/latest | jq -r '.tag_name')
-    [[ -z "$version" ]] && { log "Warning: Failed to get version / 警告：无法获取版本..." "$YELLOW"; retry_count=$((retry_count + 1)); sleep 10; continue; }
-    local url="https://github.com/apernet/hysteria/releases/download/${version}/hysteria-linux-amd64"
+    [[ -z "$version" || "$version" == "null" ]] && { log "Warning: Failed to get version / 警告：无法获取版本..." "$YELLOW"; retry_count=$((retry_count + 1)); sleep 10; continue; }
+    local url="https://github.com/apernet/hysteria/releases/download/${version}/hysteria-${os}-${arch}"
     wget -q "$url" -O /usr/local/bin/hysteria && break
     retry_count=$((retry_count + 1))
     sleep 10
@@ -629,7 +644,7 @@ EOF
 
 # 健康检查 Hysteria2 服务
 check_health() {
-  local domain="$1" main_port="$2" password="$3"
+  local domain="$1" main_port="$2"
   log "$(get_msg check_health)" "$BLUE"
   sleep 2
   if ! systemctl is-active --quiet "$SERVICE_NAME"; then
@@ -646,9 +661,15 @@ check_health() {
   else
     log "Note: NC not installed, skipping port check / 注意：未安装 NC，跳过端口检查" "$YELLOW"
   fi
-  if command -v curl &>/dev/null; then
-    curl -s --max-time 5 "hysteria2://$password@$domain:$main_port/?insecure=1" >/dev/null && log "Service connectivity confirmed / 服务连接性确认" "$GREEN" || log "Warning: Service connectivity check failed / 警告：服务连接性检查失败" "$YELLOW"
+
+  if command -v ss &>/dev/null; then
+    if ss -lunH "sport = :$main_port" | grep -q .; then
+      log "Service UDP listener detected on port $main_port / 已检测到服务在 $main_port 端口监听 UDP" "$GREEN"
+    else
+      log "Warning: No UDP listener found on port $main_port / 警告：未检测到 $main_port 端口的 UDP 监听" "$YELLOW"
+    fi
   fi
+
   return 0
 }
 
@@ -739,6 +760,8 @@ manage_service() {
 
 # 安装 Hysteria2
 install_hysteria2() {
+  check_dependencies
+
   local domain=$(get_domain)
   local email=$(get_email "$domain")
   local main_port=$(get_main_port)
@@ -752,7 +775,7 @@ install_hysteria2() {
   install_hysteria
   create_config "$domain" "$main_port"
   setup_service
-  check_health "$domain" "$main_port" "$(grep 'password:' "$CONFIG_FILE" | awk '{print $2}')" || exit 1
+  check_health "$domain" "$main_port" || exit 1
   generate_configs "$domain" "$main_port" "$port_range" "$(grep 'password:' "$CONFIG_FILE" | awk '{print $2}')"
 }
 

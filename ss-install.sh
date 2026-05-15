@@ -48,7 +48,11 @@ for i in "${!ENCRYPTION_OPTIONS[@]}"; do
   echo "$(($i+1))) ${ENCRYPTION_OPTIONS[$i]}"
 done
 read -p "输入加密方式序号（默认: xchacha20-ietf-poly1305）: " ENC_INDEX
-SHADOWSOCKS_ENCRYPTION=${ENCRYPTION_OPTIONS[$(($ENC_INDEX-1))]:-xchacha20-ietf-poly1305}
+if [[ "$ENC_INDEX" =~ ^[0-9]+$ ]] && (( ENC_INDEX >= 1 && ENC_INDEX <= ${#ENCRYPTION_OPTIONS[@]} )); then
+  SHADOWSOCKS_ENCRYPTION="${ENCRYPTION_OPTIONS[$((ENC_INDEX-1))]}"
+else
+  SHADOWSOCKS_ENCRYPTION="xchacha20-ietf-poly1305"
+fi
 
 # 获取服务器公网 IP
 SERVER_IP=$(curl -s https://api.ipify.org)

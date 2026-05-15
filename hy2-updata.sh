@@ -73,11 +73,19 @@ DOWNLOAD_URL="https://github.com/apernet/hysteria/releases/download/${LATEST_VER
 
 # 6. 先在服务运行状态下下载核心文件 (避免断网)
 TMP_BIN_PATH="/tmp/hysteria_new_core"
+BACKUP_BIN_PATH="${BIN_PATH}.bak.$(date +%Y%m%d%H%M%S)"
 echo "⬇️  正在后台静默下载最新版核心 (保持当前网络畅通)..."
-curl -L -o "$TMP_BIN_PATH" "$DOWNLOAD_URL"
+curl -fL -o "$TMP_BIN_PATH" "$DOWNLOAD_URL"
 
 if [ $? -ne 0 ] || [ ! -s "$TMP_BIN_PATH" ]; then
     echo "❌ 下载失败或文件不完整！原服务仍在正常运行，升级终止。"
+    rm -f "$TMP_BIN_PATH"
+    exit 1
+fi
+
+chmod +x "$TMP_BIN_PATH"
+if ! timeout 5 "$TMP_BIN_PATH" version >/dev/null 2>&1; then
+    echo "❌ 新下载的核心文件校验失败！原服务仍在正常运行，升级终止。"
     rm -f "$TMP_BIN_PATH"
     exit 1
 fi
@@ -88,12 +96,23 @@ trap '' HUP
 
 # 8. 连续执行停止、覆盖、启动 (确保在极短时间内完成)
 echo "🛑 正在执行原子级替换与重启..."
-# 使用连锁命令，任何一步失败都不会卡死
-systemctl stop "$SERVICE_NAME" ; \
-mv -f "$TMP_BIN_PATH" "$BIN_PATH" ; \
-chmod +x "$BIN_PATH" ; \
-systemctl daemon-reload ; \
-systemctl start "$SERVICE_NAME"
+ROLLBACK_DONE=0
+if systemctl stop "$SERVICE_NAME" && \
+   cp -f "$BIN_PATH" "$BACKUP_BIN_PATH" && \
+   mv -f "$TMP_BIN_PATH" "$BIN_PATH" && \
+   chmod +x "$BIN_PATH" && \
+   systemctl daemon-reload && \
+   systemctl start "$SERVICE_NAME"; then
+    rm -f "$BACKUP_BIN_PATH"
+else
+    echo "⚠️ 新核心替换或启动失败，正在自动回滚..."
+    mv -f "$BACKUP_BIN_PATH" "$BIN_PATH" 2>/dev/null
+    chmod +x "$BIN_PATH" 2>/dev/null
+    systemctl daemon-reload
+    systemctl start "$SERVICE_NAME" 2>/dev/null
+    ROLLBACK_DONE=1
+fi
+rm -f "$TMP_BIN_PATH"
 
 # 恢复默认的信号处理
 trap - HUP
@@ -104,8 +123,13 @@ trap - HUP
 sleep 2
 if systemctl is-active --quiet "$SERVICE_NAME"; then
     echo "=========================================="
-    echo "🎉 升级成功且服务已恢复！"
-    echo "当前版本:"
+    if [ "$ROLLBACK_DONE" -eq 1 ]; then
+        echo "⚠️ 新版本启动失败，已自动回滚到旧版本，服务已恢复。"
+        echo "当前运行版本:"
+    else
+        echo "🎉 升级成功且服务已恢复！"
+        echo "当前版本:"
+    fi
     "$BIN_PATH" version
     echo "=========================================="
 else

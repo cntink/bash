@@ -73,7 +73,8 @@ MESSAGES[manage_menu_view_log]=" 5) 查看 Hysteria2 运行日志"
 MESSAGES[manage_menu_reinstall]=" 6) 重新安装/更改配置"
 MESSAGES[manage_menu_uninstall]=" 7) 仅卸载 Hysteria2"
 MESSAGES[manage_menu_upgrade]=" 8) 热升级/更新 Hysteria2 核心 (防断连)"
-MESSAGES[manage_menu_exit]=" 9) 退出菜单"
+MESSAGES[manage_menu_apply_firewall]=" 9) 重建防火墙规则"
+MESSAGES[manage_menu_exit]="10) 退出菜单"
 
 MESSAGES[uninstall_confirm]="您确定要卸载 Hysteria2 吗? (默认: Y) [y/N]: "
 MESSAGES[uninstall_backup_confirm]="是否备份当前配置文件? (默认: Y) [Y/n]: "
@@ -174,6 +175,13 @@ check_dependencies() {
 
     local deps_missing=0
     local deps_to_install=()
+    local pkg_manager=""
+
+    if command -v dnf >/dev/null 2>&1; then
+        pkg_manager="dnf"
+    elif command -v yum >/dev/null 2>&1; then
+        pkg_manager="yum"
+    fi
 
     # 检查基础工具 (curl, wget, openssl, qrencode)
     if ! command -v curl >/dev/null 2>&1; then
@@ -243,8 +251,9 @@ check_dependencies() {
                 exit 1
             fi
             log "INFO" "apt 依赖项安装完成。" "$GREEN"
-        elif command -v yum >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1; then
+        elif [ -n "$pkg_manager" ]; then
             # RHEL/CentOS/Fedora
+<<<<<<< HEAD
             local pkg_manager=""
             if command -v dnf >/dev/null 2>&1; then
                 pkg_manager="dnf"
@@ -252,6 +261,8 @@ check_dependencies() {
                 pkg_manager="yum"
             fi
 
+=======
+>>>>>>> 98212c3 (Update hy2-obfs.sh)
             # 适配 RedHat 体系下的 cron 包名为 cronie
             local rpm_deps=()
             for dep in "${deps_to_install[@]}"; do
@@ -285,7 +296,7 @@ check_dependencies() {
         local persist_pkg=""
         if command -v apt >/dev/null 2>&1; then
             persist_pkg="iptables-persistent"
-        elif command -v yum >/dev/null 2>&1 || command -v dnf >/dev/null 2>&1; then
+        elif [ -n "$pkg_manager" ]; then
             persist_pkg="iptables-services"
         else
             log "INFO" "无法自动安装防火墙持久化工具，请手动安装相关软件包。" "$BLUE"
@@ -586,28 +597,72 @@ EOF
     systemctl enable "$SERVICE_NAME" &>/dev/null
     log "INFO" "systemd 服务文件创建成功。" "$GREEN"
 }
+<<<<<<< HEAD
 # V5.33 修正：增加防火墙规则清理逻辑
+=======
+# 从已有配置反查当前端口与端口跳跃设置，避免卸载时使用默认值清理失败
+load_current_firewall_settings() {
+    if [ -f "$CONFIG_FILE" ]; then
+        local parsed_port
+        parsed_port=$(awk '/^listen:/ {split($2,a,":"); print a[length(a)]; exit}' "$CONFIG_FILE")
+        if [[ "$parsed_port" =~ ^[0-9]+$ ]]; then
+            H_PORT="$parsed_port"
+        fi
+    fi
+
+    H_ENABLE_PORT_HOP="false"
+    H_PORT_HOP_RANGE=""
+    if [ -f "/etc/hysteria/client_config.yaml" ]; then
+        local parsed_range
+        parsed_range=$(awk '/ports:/{print $2; exit}' "/etc/hysteria/client_config.yaml" | tr -d '\"\n\r')
+        if [[ "$parsed_range" =~ ^[0-9]+-[0-9]+$ ]]; then
+            H_ENABLE_PORT_HOP="true"
+            H_PORT_HOP_RANGE="$parsed_range"
+        fi
+    fi
+}
+
+# V5.33 修正：增加防火墙规则清理逻辑（幂等，重复规则全部清理）
+>>>>>>> 98212c3 (Update hy2-obfs.sh)
 cleanup_firewall() {
     log "INFO" "正在清理 Hysteria2 防火墙规则..." "$BLUE"
-    local TARGET_PORT="${H_PORT:-443}"
-    local range="${H_PORT_HOP_RANGE:-40000-60000}"
-    local range_iptables=$(echo "$range" | sed 's/-/:/g')
+    load_current_firewall_settings
 
-    # 检查是否存在 iptables 规则
-    if iptables -t nat -S PREROUTING 2>/dev/null | grep -q "DNAT.*--dport.*$TARGET_PORT"; then
-        iptables -t nat -D PREROUTING -p udp --dport "$TARGET_PORT" -j DNAT --to-destination :"$TARGET_PORT" 2>/dev/null
-        log "INFO" "已删除主端口 $TARGET_PORT 的 DNAT 规则" "$YELLOW"
+    local TARGET_PORT="${H_PORT:-443}"
+    local range_iptables=""
+    local has_changes=0
+
+    if [ -n "$H_PORT_HOP_RANGE" ]; then
+        range_iptables=$(echo "$H_PORT_HOP_RANGE" | sed 's/-/:/g')
     fi
-    if [ "$H_ENABLE_PORT_HOP" = "true" ] && [ -n "$H_PORT_HOP_RANGE" ]; then
-        if iptables -t nat -S PREROUTING 2>/dev/null | grep -q "DNAT.*--dport.*$range_iptables"; then
-            iptables -t nat -D PREROUTING -p udp --dport "$range_iptables" -j DNAT --to-destination :"$TARGET_PORT" 2>/dev/null
-            log "INFO" "已删除端口跳跃范围 $range_iptables 的 DNAT 规则" "$YELLOW"
-        fi
-        if iptables -S INPUT 2>/dev/null | grep -q "ACCEPT.*--dport.*$range_iptables"; then
-            iptables -D INPUT -p udp --dport "$range_iptables" -j ACCEPT 2>/dev/null
-            log "INFO" "已删除端口跳跃范围 $range_iptables 的 INPUT 规则" "$YELLOW"
-        fi
+
+    while iptables -C INPUT -p udp --dport "$TARGET_PORT" -j ACCEPT 2>/dev/null; do
+        iptables -D INPUT -p udp --dport "$TARGET_PORT" -j ACCEPT 2>/dev/null || break
+        has_changes=1
+    done
+
+    while iptables -t nat -C PREROUTING -p udp --dport "$TARGET_PORT" -j DNAT --to-destination :"$TARGET_PORT" 2>/dev/null; do
+        iptables -t nat -D PREROUTING -p udp --dport "$TARGET_PORT" -j DNAT --to-destination :"$TARGET_PORT" 2>/dev/null || break
+        has_changes=1
+    done
+
+    if [ -n "$range_iptables" ]; then
+        while iptables -t nat -C PREROUTING -p udp --dport "$range_iptables" -j DNAT --to-destination :"$TARGET_PORT" 2>/dev/null; do
+            iptables -t nat -D PREROUTING -p udp --dport "$range_iptables" -j DNAT --to-destination :"$TARGET_PORT" 2>/dev/null || break
+            has_changes=1
+        done
+        while iptables -C INPUT -p udp --dport "$range_iptables" -j ACCEPT 2>/dev/null; do
+            iptables -D INPUT -p udp --dport "$range_iptables" -j ACCEPT 2>/dev/null || break
+            has_changes=1
+        done
     fi
+
+    if [ "$has_changes" -eq 1 ]; then
+        log "INFO" "已清理 Hysteria2 相关防火墙规则。" "$YELLOW"
+    else
+        log "INFO" "未发现可清理的 Hysteria2 防火墙规则。" "$GREEN"
+    fi
+
     if command -v iptables-save >/dev/null 2>&1; then
         mkdir -p /etc/iptables
         iptables-save > /etc/iptables/rules.v4 2>/dev/null
@@ -656,6 +711,9 @@ uninstall_hysteria() {
         log "INFO" "已保留核心二进制文件: $BINARY_PATH" "$YELLOW"
     fi
 
+    # 在删除配置文件前清理防火墙，确保可反查到真实端口和端口跳跃范围
+    cleanup_firewall
+
     if [[ "$keep_cert" =~ ^[yY]$ ]]; then
         rm -f "$CONFIG_FILE"
         rm -f "$CONFIG_DIR/.lang"
@@ -664,8 +722,6 @@ uninstall_hysteria() {
         rm -rf "$CONFIG_DIR"
         log "INFO" "已删除证书文件夹和配置文件。" "$YELLOW"
     fi
-    # ** V5.33 修正：清理防火墙规则 **
-    cleanup_firewall
     log "INFO" "Hysteria2 服务已卸载。 / Hysteria2 has been uninstalled." "$GREEN"
 
     return 0
@@ -700,31 +756,42 @@ backup_config() {
     ls -t "$BACKUP_DIR"/hysteria_config_backup_*.yaml | tail -n +$((max_backups + 1)) | xargs -I {} rm {}
 }
 
-# 修正后的 configure_firewall 函数
+# 修正后的 configure_firewall 函数（幂等，避免重复追加）
 configure_firewall() {
     log "INFO" "配置防火墙以支持端口跳跃..." "$BLUE"
 
     local TARGET_PORT="$H_PORT"
     local has_changes=0
 
+    if ! [[ "$TARGET_PORT" =~ ^[0-9]+$ ]]; then
+        log "ERROR" "主端口无效，无法配置防火墙: $TARGET_PORT" "$RED"
+        return 1
+    fi
+
     # 1. 开放主监听端口
-    log "INFO" "开放 Hysteria 主监听端口: UDP $TARGET_PORT" "$BLUE"
-    iptables -A INPUT -p udp --dport "$TARGET_PORT" -j ACCEPT
-    if [ $? -eq 0 ]; then has_changes=1; fi
+    if ! iptables -C INPUT -p udp --dport "$TARGET_PORT" -j ACCEPT 2>/dev/null; then
+        log "INFO" "开放 Hysteria 主监听端口: UDP $TARGET_PORT" "$BLUE"
+        iptables -A INPUT -p udp --dport "$TARGET_PORT" -j ACCEPT || return 1
+        has_changes=1
+    fi
 
     if [ "$H_ENABLE_PORT_HOP" = "true" ] && [ -n "$H_PORT_HOP_RANGE" ]; then
         # 替换 - 为 : 以符合 iptables 格式
         local range=$(echo "$H_PORT_HOP_RANGE" | sed 's/-/:/g')
 
         # 2. 添加 iptables DNAT 规则：将范围端口转发到主端口
-        log "INFO" "添加端口跳跃 DNAT 规则: UDP $range -> $TARGET_PORT" "$BLUE"
-        iptables -t nat -A PREROUTING -p udp --dport "$range" -j DNAT --to-destination :"$TARGET_PORT"
-        if [ $? -eq 0 ]; then has_changes=1; fi
+        if ! iptables -t nat -C PREROUTING -p udp --dport "$range" -j DNAT --to-destination :"$TARGET_PORT" 2>/dev/null; then
+            log "INFO" "添加端口跳跃 DNAT 规则: UDP $range -> $TARGET_PORT" "$BLUE"
+            iptables -t nat -A PREROUTING -p udp --dport "$range" -j DNAT --to-destination :"$TARGET_PORT" || return 1
+            has_changes=1
+        fi
 
         # 3. 开放端口跳跃范围
-        log "INFO" "开放 Hysteria 端口跳跃范围: UDP $range" "$BLUE"
-        iptables -A INPUT -p udp --dport "$range" -j ACCEPT
-        if [ $? -eq 0 ]; then has_changes=1; fi
+        if ! iptables -C INPUT -p udp --dport "$range" -j ACCEPT 2>/dev/null; then
+            log "INFO" "开放 Hysteria 端口跳跃范围: UDP $range" "$BLUE"
+            iptables -A INPUT -p udp --dport "$range" -j ACCEPT || return 1
+            has_changes=1
+        fi
     fi
 
     if [ "$has_changes" -eq 1 ]; then
@@ -736,6 +803,8 @@ configure_firewall() {
         else
             log "WARN" "警告：未找到 iptables-save，规则可能在重启后丢失。请安装 iptables-persistent。" "$YELLOW"
         fi
+    else
+        log "INFO" "防火墙规则已存在，无需重复写入。" "$GREEN"
     fi
 
     return 0
@@ -793,15 +862,17 @@ upgrade_hysteria() {
 
     local DOWNLOAD_URL="https://github.com/apernet/hysteria/releases/download/${LATEST_VERSION}/hysteria-${OS_NAME}-${ARCH_NAME}"
     local TMP_BIN_PATH="/tmp/hysteria_new_core"
+    local BACKUP_BIN_PATH="${BINARY_PATH}.bak.$(date +%Y%m%d%H%M%S)"
+    local ROLLBACK_DONE=0
 
     log "INFO" "正在后台静默下载最新版核心 (保持当前网络畅通)..." "$BLUE"
     if command -v curl >/dev/null 2>&1; then
-        curl -L -o "$TMP_BIN_PATH" "$DOWNLOAD_URL"
+        curl -fL -o "$TMP_BIN_PATH" "$DOWNLOAD_URL"
     else
         wget "$DOWNLOAD_URL" -O "$TMP_BIN_PATH"
     fi
 
-    if [ ! -s "$TMP_BIN_PATH" ]; then
+    if [ $? -ne 0 ] || [ ! -s "$TMP_BIN_PATH" ]; then
         log "ERROR" "下载失败或文件不完整！原服务仍在正常运行，升级终止。" "$RED"
         rm -f "$TMP_BIN_PATH"
         return 1
@@ -818,18 +889,35 @@ upgrade_hysteria() {
 
     # 核心防断连改造
     trap '' HUP
-    systemctl stop "$SERVICE_NAME"
-    mv -f "$TMP_BIN_PATH" "$BINARY_PATH"
-    chmod +x "$BINARY_PATH"
-    systemctl daemon-reload
-    systemctl start "$SERVICE_NAME"
+    if systemctl stop "$SERVICE_NAME" && \
+       cp -f "$BINARY_PATH" "$BACKUP_BIN_PATH" && \
+       mv -f "$TMP_BIN_PATH" "$BINARY_PATH" && \
+       chmod +x "$BINARY_PATH" && \
+       systemctl daemon-reload && \
+       systemctl start "$SERVICE_NAME"; then
+        rm -f "$BACKUP_BIN_PATH"
+    else
+        log "WARN" "新核心替换或启动失败，正在自动回滚..." "$YELLOW"
+        mv -f "$BACKUP_BIN_PATH" "$BINARY_PATH" 2>/dev/null
+        chmod +x "$BINARY_PATH" 2>/dev/null
+        systemctl daemon-reload
+        systemctl start "$SERVICE_NAME" 2>/dev/null
+        ROLLBACK_DONE=1
+    fi
     trap - HUP
+    rm -f "$TMP_BIN_PATH"
 
     sleep 2
     if systemctl is-active --quiet "$SERVICE_NAME"; then
-        log "INFO" "🎉 升级成功且服务已无缝恢复！当前版本: $LATEST_VERSION" "$GREEN"
+        if [ "$ROLLBACK_DONE" -eq 1 ]; then
+            log "WARN" "新版本启动失败，已自动回滚到旧版本，服务已恢复。" "$YELLOW"
+            log "INFO" "当前运行版本: $("$BINARY_PATH" version 2>/dev/null | head -n 1)" "$GREEN"
+        else
+            log "INFO" "🎉 升级成功且服务已无缝恢复！当前版本: $LATEST_VERSION" "$GREEN"
+        fi
     else
         log "ERROR" "警告：服务启动异常！请检查日志。" "$RED"
+        return 1
     fi
 }
 
@@ -1007,9 +1095,6 @@ generate_client_config() {
         log "ERROR" "错误：无法生成 Hysteria2 CLI YAML 配置" "$RED"
     fi
     echo -e "${GREEN}==============================================${NC}"
-
-    # 配置防火墙（端口跳跃）
-    configure_firewall
 }
 
 # V5.13 修正：确保从配置文件中正确读取 H_DOMAIN 等变量
@@ -1017,7 +1102,11 @@ manage_menu() {
     detect_existing_domain
     if [ -f "$CONFIG_FILE" ]; then
         # 1. 尝试从 config.yaml (内置ACME) 中解析
+<<<<<<< HEAD
         H_DOMAIN=$(awk '/^  domains:/{getline; gsub(/["\- ]/,"",$1); print $1; exit}' "$CONFIG_FILE")
+=======
+        H_DOMAIN=$(awk '/^  domains:/{getline; gsub(/["\- ]/,"",$2); print $2; exit}' "$CONFIG_FILE")
+>>>>>>> 98212c3 (Update hy2-obfs.sh)
         
         # 2. 从外部证书直接提取真实域名 (解决[YOUR_DOMAIN_HERE]的痛点)
         if [ -z "$H_DOMAIN" ]; then
@@ -1089,9 +1178,10 @@ manage_menu() {
         echo -e " $(get_msg 'manage_menu_reinstall')"
         echo -e " $(get_msg 'manage_menu_uninstall')"
         echo -e " $(get_msg 'manage_menu_upgrade')"
+        echo -e " $(get_msg 'manage_menu_apply_firewall')"
         echo -e " $(get_msg 'manage_menu_exit')"
         echo -e "${YELLOW}------------------------------------------------${NC}"
-        read -p "请输入选项 [1-9]: " menu_choice
+        read -p "请输入选项 [1-10]: " menu_choice
         echo
         case "$menu_choice" in
             1) generate_client_config; read -p "按回车键继续..." temp;;
@@ -1105,8 +1195,13 @@ manage_menu() {
             6) uninstall_hysteria && install_hysteria; return;;
             7) uninstall_hysteria; return;;
             8) upgrade_hysteria; read -p "按回车键返回菜单..." temp;;
-            9) return;;
-            *) echo -e "${RED}无效选项，请重新输入。${NC}"; sleep 1;;
+            9)
+                load_current_firewall_settings
+                configure_firewall
+                read -p "按回车键返回菜单..." temp
+                ;;
+            10) return;;
+            *) echo -e "${RED}无效选项，请重新输入 1-10。${NC}"; sleep 1;;
         esac
     done
 }
@@ -1405,6 +1500,11 @@ install_hysteria() {
         create_shortcut
         echo
         generate_client_config
+        if ! configure_firewall; then
+            log "ERROR" "防火墙配置失败，正在回滚安装..." "$RED"
+            rollback_install "${rollback_files[@]}"
+            exit 1
+        fi
     else
         log "ERROR" "Hysteria2 服务启动失败，请检查日志!" "$RED"
         journalctl -u "$SERVICE_NAME" -n 20 --no-pager
