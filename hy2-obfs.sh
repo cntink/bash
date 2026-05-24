@@ -253,7 +253,6 @@ check_dependencies() {
             log "INFO" "apt 依赖项安装完成。" "$GREEN"
         elif [ -n "$pkg_manager" ]; then
             # RHEL/CentOS/Fedora
-<<<<<<< HEAD
             local pkg_manager=""
             if command -v dnf >/dev/null 2>&1; then
                 pkg_manager="dnf"
@@ -261,8 +260,6 @@ check_dependencies() {
                 pkg_manager="yum"
             fi
 
-=======
->>>>>>> 98212c3 (Update hy2-obfs.sh)
             # 适配 RedHat 体系下的 cron 包名为 cronie
             local rpm_deps=()
             for dep in "${deps_to_install[@]}"; do
@@ -597,33 +594,7 @@ EOF
     systemctl enable "$SERVICE_NAME" &>/dev/null
     log "INFO" "systemd 服务文件创建成功。" "$GREEN"
 }
-<<<<<<< HEAD
 # V5.33 修正：增加防火墙规则清理逻辑
-=======
-# 从已有配置反查当前端口与端口跳跃设置，避免卸载时使用默认值清理失败
-load_current_firewall_settings() {
-    if [ -f "$CONFIG_FILE" ]; then
-        local parsed_port
-        parsed_port=$(awk '/^listen:/ {split($2,a,":"); print a[length(a)]; exit}' "$CONFIG_FILE")
-        if [[ "$parsed_port" =~ ^[0-9]+$ ]]; then
-            H_PORT="$parsed_port"
-        fi
-    fi
-
-    H_ENABLE_PORT_HOP="false"
-    H_PORT_HOP_RANGE=""
-    if [ -f "/etc/hysteria/client_config.yaml" ]; then
-        local parsed_range
-        parsed_range=$(awk '/ports:/{print $2; exit}' "/etc/hysteria/client_config.yaml" | tr -d '\"\n\r')
-        if [[ "$parsed_range" =~ ^[0-9]+-[0-9]+$ ]]; then
-            H_ENABLE_PORT_HOP="true"
-            H_PORT_HOP_RANGE="$parsed_range"
-        fi
-    fi
-}
-
-# V5.33 修正：增加防火墙规则清理逻辑（幂等，重复规则全部清理）
->>>>>>> 98212c3 (Update hy2-obfs.sh)
 cleanup_firewall() {
     log "INFO" "正在清理 Hysteria2 防火墙规则..." "$BLUE"
     load_current_firewall_settings
@@ -1102,11 +1073,7 @@ manage_menu() {
     detect_existing_domain
     if [ -f "$CONFIG_FILE" ]; then
         # 1. 尝试从 config.yaml (内置ACME) 中解析
-<<<<<<< HEAD
         H_DOMAIN=$(awk '/^  domains:/{getline; gsub(/["\- ]/,"",$1); print $1; exit}' "$CONFIG_FILE")
-=======
-        H_DOMAIN=$(awk '/^  domains:/{getline; gsub(/["\- ]/,"",$2); print $2; exit}' "$CONFIG_FILE")
->>>>>>> 98212c3 (Update hy2-obfs.sh)
         
         # 2. 从外部证书直接提取真实域名 (解决[YOUR_DOMAIN_HERE]的痛点)
         if [ -z "$H_DOMAIN" ]; then
