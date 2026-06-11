@@ -465,7 +465,7 @@ issue_certificate() {
   esac
 
   mkdir -p "$CERT_DIR/$domain"
-  "$ACME_SH" --installcert -d "$domain" --cert-file "$cert_path" --key-file "$key_path" --force || { log "Error: Failed to install certificate! / 错误：安装证书失败！" "$RED"; exit 1; }
+  "$ACME_SH" --install-cert -d "$domain" --ecc --cert-file "$cert_path" --key-file "$key_path" --force || { log "Error: Failed to install certificate! / 错误：安装证书失败！" "$RED"; exit 1; }
 }
 
 # 检查 SSL 证书环境
