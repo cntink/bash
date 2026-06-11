@@ -577,7 +577,8 @@ auth:
 quic:
   initStreamReceiveWindow: 67108864
   maxStreamReceiveWindow: 268435456
-  maxConnectionReceiveWindow: 1073741824
+  initConnReceiveWindow: 67108864
+  maxConnReceiveWindow: 1073741824
 bandwidth:
   up: 1000 mbps
   down: 1000 mbps
