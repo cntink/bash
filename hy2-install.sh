@@ -1,4 +1,4 @@
-#!/bin/bash
+﻿#!/bin/bash
 
 # 定义颜色变量用于终端输出
 RED='\033[0;31m'
@@ -149,7 +149,7 @@ MESSAGES[zh_check_health]="检查服务健康状态..."
 MESSAGES[zh_service_ok]="服务正常运行"
 MESSAGES[zh_install_done]="安装完成！配置文件位于: %s"
 MESSAGES[zh_service_exists]="检测到 Hysteria2 服务已存在，请选择操作:\n${GREEN}1) 管理服务${NC}\n${GREEN}2) 安装新 Hysteria2${NC}\n${GREEN}3) 卸载 Hysteria2${NC}\n${GREEN}0) 退出脚本${NC}"
-MESSAGES[zh_manage_menu]="请选择管理操作:\n${GREEN}1) 查看服务状态${NC}\n${GREEN}2) 查看最近 30 条日志${NC}\n${GREEN}3) 重启服务${NC}\n${GREEN}4) 停止服务${NC}\n${GREEN}5) 显示配置信息${NC}\n${GREEN}0) 返回上级菜单${NC}"
+MESSAGES[zh_manage_menu]="请选择管理操作:\n${GREEN}1) 查看服务状态${NC}\n${GREEN}2) 查看最近 30 条日志${NC}\n${GREEN}3) 重启服务${NC}\n${GREEN}4) 停止服务${NC}\n${GREEN}5) 显示配置信息${NC}\n${GREEN}6) 查看证书到期时间${NC}\n${GREEN}7) 手动续期证书${NC}\n${GREEN}8) 热升级 Hysteria2 核心${NC}\n${GREEN}0) 返回上级菜单${NC}"
 MESSAGES[zh_service_status]="Hysteria2 服务状态:"
 MESSAGES[zh_service_logs]="Hysteria2 服务最近 30 条日志:"
 MESSAGES[zh_service_restart]="正在重启 Hysteria2 服务..."
@@ -157,7 +157,7 @@ MESSAGES[zh_service_stop]="正在停止 Hysteria2 服务..."
 MESSAGES[zh_service_config]="Hysteria2 服务配置信息:"
 MESSAGES[zh_continue_prompt]="按回车返回管理菜单..."
 MESSAGES[zh_input_option]="输入选项 (0-3): "
-MESSAGES[zh_input_manage_option]="输入选项 (0-5): "
+MESSAGES[zh_input_manage_option]="输入选项 (0-8): "
 # 英文提示
 MESSAGES[en_input_domain]="Please enter the domain: "
 MESSAGES[en_input_email]="Email for certificate application (default auto-generated): "
@@ -203,7 +203,7 @@ MESSAGES[en_check_health]="Checking service health..."
 MESSAGES[en_service_ok]="Service running normally"
 MESSAGES[en_install_done]="Installation completed! Config file located at: %s"
 MESSAGES[en_service_exists]="Hysteria2 service detected, choose action:\n${GREEN}1) Manage service${NC}\n${GREEN}2) Install new Hysteria2${NC}\n${GREEN}3) Uninstall Hysteria2${NC}\n${GREEN}0) Exit script${NC}"
-MESSAGES[en_manage_menu]="Select management action:\n${GREEN}1) View service status${NC}\n${GREEN}2) View last 30 log entries${NC}\n${GREEN}3) Restart service${NC}\n${GREEN}4) Stop service${NC}\n${GREEN}5) Show config info${NC}\n${GREEN}0) Return to previous menu${NC}"
+MESSAGES[en_manage_menu]="Select management action:\n${GREEN}1) View service status${NC}\n${GREEN}2) View last 30 log entries${NC}\n${GREEN}3) Restart service${NC}\n${GREEN}4) Stop service${NC}\n${GREEN}5) Show config info${NC}\n${GREEN}6) View certificate expiry${NC}\n${GREEN}7) Renew certificate now${NC}\n${GREEN}8) Hot upgrade Hysteria2 core${NC}\n${GREEN}0) Return to previous menu${NC}"
 MESSAGES[en_service_status]="Hysteria2 service status:"
 MESSAGES[en_service_logs]="Last 30 log entries for Hysteria2 service:"
 MESSAGES[en_service_restart]="Restarting Hysteria2 service..."
@@ -211,7 +211,7 @@ MESSAGES[en_service_stop]="Stopping Hysteria2 service..."
 MESSAGES[en_service_config]="Hysteria2 service configuration info:"
 MESSAGES[en_continue_prompt]="Press Enter to return to the management menu..."
 MESSAGES[en_input_option]="Enter option (0-3): "
-MESSAGES[en_input_manage_option]="Enter option (0-5): "
+MESSAGES[en_input_manage_option]="Enter option (0-8): "
 
 # 获取语言特定消息
 get_msg() {
@@ -384,6 +384,11 @@ install_acme_sh() {
     rm -rf "$HOME/.acme.sh"
     exit 1
   }
+}
+
+ensure_acme_renewal_job() {
+  systemctl enable --now cron &>/dev/null || systemctl enable --now crond &>/dev/null || true
+  [[ -x "$ACME_SH" ]] && "$ACME_SH" --install-cronjob &>/dev/null || true
 }
 
 # Check whether any known Hysteria service or install artifact exists.
@@ -614,13 +619,320 @@ install_hysteria() {
     log "$(get_msg download_hy2 "$((retry_count + 1))" "$max_retries")" "$BLUE"
     [[ -z "$latest_version" || "$latest_version" == "null" ]] && latest_version=$(curl -sL --connect-timeout 10 https://api.github.com/repos/apernet/hysteria/releases/latest | jq -r '.tag_name')
     [[ -z "$latest_version" || "$latest_version" == "null" ]] && { log "Warning: Failed to get version / 警告：无法获取版本..." "$YELLOW"; retry_count=$((retry_count + 1)); sleep 10; continue; }
-    local url="https://github.com/apernet/hysteria/releases/download/${latest_version}/hysteria-${os}-${arch}"
-    wget -q "$url" -O /usr/local/bin/hysteria && break
+    if download_hysteria_binary_to_path "$latest_version" "$os" "$arch" "/usr/local/bin/hysteria"; then
+      break
+    fi
     retry_count=$((retry_count + 1))
     sleep 10
   done
   [[ $retry_count -eq $max_retries ]] && { log "Error: Download failed! / 错误：下载失败！" "$RED"; exit 1; }
   chmod +x /usr/local/bin/hysteria
+}
+
+# 自动续期、证书检查与热升级相关辅助函数
+get_config_cert_path() {
+  local cert_path=""
+  [[ -f "$CONFIG_FILE" ]] || return 1
+  cert_path=$(awk '/^[[:space:]]+cert:/ {gsub(/"/, "", $2); print $2; exit}' "$CONFIG_FILE")
+  [[ -n "$cert_path" ]] || return 1
+  printf "%s" "$cert_path"
+}
+
+get_cert_days_remaining() {
+  local cert_path="$1" not_after end_ts now_ts
+  [[ -f "$cert_path" ]] || return 1
+  not_after=$(openssl x509 -in "$cert_path" -noout -enddate 2>/dev/null | sed 's/^notAfter=//')
+  [[ -n "$not_after" ]] || return 1
+  end_ts=$(date -d "$not_after" +%s 2>/dev/null) || return 1
+  now_ts=$(date +%s)
+  printf "%s" "$(((end_ts - now_ts + 86399) / 86400))"
+}
+
+normalize_cert_domain() {
+  local cert_path="$1" domain
+  domain=$(basename "$(dirname "$cert_path")")
+  domain="${domain%_ecc}"
+  printf "%s" "$domain"
+}
+
+cert_is_ecc() {
+  local cert_path="$1"
+  openssl x509 -in "$cert_path" -noout -text 2>/dev/null | grep -q 'Public Key Algorithm: id-ecPublicKey'
+}
+
+resolve_acme_domain_name() {
+  normalize_cert_domain "$1"
+}
+
+resolve_acme_ecc_flag() {
+  local cert_path="$1" domain_dir
+  domain_dir=$(basename "$(dirname "$cert_path")")
+  if [[ "$domain_dir" == *_ecc ]] || cert_is_ecc "$cert_path"; then
+    printf "%s" "--ecc"
+  fi
+}
+
+resolve_acme_key_path() {
+  local cert_path="$1" domain="$2" domain_dir
+  domain_dir=$(basename "$(dirname "$cert_path")")
+  if [[ "$cert_path" == "$HOME/.acme.sh/"* ]]; then
+    printf "%s" "$HOME/.acme.sh/$domain_dir/$domain.key"
+  else
+    printf "%s" "$(dirname "$cert_path")/privkey.pem"
+  fi
+}
+
+show_certificate_expiry() {
+  local cert_path domain not_after days_remaining
+  cert_path=$(get_config_cert_path 2>/dev/null || true)
+  if [[ -z "$cert_path" || ! -f "$cert_path" ]]; then
+    log_i18n "未找到可查看的证书文件" "No certificate file found to inspect" "$YELLOW"
+    return 1
+  fi
+
+  domain=$(normalize_cert_domain "$cert_path")
+  not_after=$(openssl x509 -in "$cert_path" -noout -enddate 2>/dev/null | sed 's/^notAfter=//')
+  days_remaining=$(get_cert_days_remaining "$cert_path" 2>/dev/null || true)
+
+  log_i18n "证书域名: $domain" "Certificate domain: $domain" "$GREEN"
+  log_i18n "证书路径: $cert_path" "Certificate path: $cert_path" "$GREEN"
+  [[ -n "$not_after" ]] && log_i18n "证书到期时间: $not_after" "Certificate expiry: $not_after" "$GREEN"
+  if [[ -n "$days_remaining" ]]; then
+    if [[ "$days_remaining" -le 0 ]]; then
+      log_i18n "证书已过期" "Certificate has expired" "$RED"
+    else
+      log_i18n "证书剩余天数: $days_remaining" "Days remaining: $days_remaining" "$GREEN"
+    fi
+  fi
+}
+
+renew_certificate_now() {
+  local cert_path domain days_remaining ecc_flag install_ok key_path unit_name
+  cert_path=$(get_config_cert_path 2>/dev/null || true)
+  if [[ -z "$cert_path" || ! -f "$cert_path" ]]; then
+    log_i18n "未找到可续期的证书文件" "No certificate file found to renew" "$YELLOW"
+    return 1
+  fi
+
+  domain=$(resolve_acme_domain_name "$cert_path")
+  ecc_flag=$(resolve_acme_ecc_flag "$cert_path" || true)
+
+  days_remaining=$(get_cert_days_remaining "$cert_path" 2>/dev/null || true)
+  log_i18n "开始手动续期证书，当前剩余天数: ${days_remaining:-未知}" "Starting manual certificate renewal, current days remaining: ${days_remaining:-unknown}" "$BLUE"
+
+  if [[ -n "$ecc_flag" ]]; then
+    if ! "$ACME_SH" --renew -d "$domain" --force --ecc --days 15; then
+      log_i18n "ECC 续期失败，尝试按 RSA 方式重试" "ECC renewal failed, retrying as RSA" "$YELLOW"
+      ecc_flag=""
+      "$ACME_SH" --renew -d "$domain" --force --days 15 || {
+        log_i18n "证书续期失败" "Certificate renewal failed" "$RED"
+        return 1
+      }
+    fi
+  else
+    if ! "$ACME_SH" --renew -d "$domain" --force --days 15; then
+      log_i18n "RSA 续期失败，尝试按 ECC 方式重试" "RSA renewal failed, retrying as ECC" "$YELLOW"
+      ecc_flag="--ecc"
+      "$ACME_SH" --renew -d "$domain" --force --ecc --days 15 || {
+        log_i18n "证书续期失败" "Certificate renewal failed" "$RED"
+        return 1
+      }
+    fi
+  fi
+
+  install_ok=false
+  if [[ -n "$ecc_flag" ]]; then
+    "$ACME_SH" --install-cert -d "$domain" --ecc --force &>/dev/null && install_ok=true
+  else
+    "$ACME_SH" --install-cert -d "$domain" --force &>/dev/null && install_ok=true
+  fi
+
+  if [[ "$install_ok" != "true" ]]; then
+    key_path=$(resolve_acme_key_path "$cert_path" "$domain")
+    mkdir -p "$(dirname "$cert_path")"
+    if [[ -f "$key_path" ]]; then
+      if [[ -n "$ecc_flag" ]]; then
+        "$ACME_SH" --install-cert -d "$domain" --ecc --cert-file "$cert_path" --key-file "$key_path" --force &>/dev/null || true
+      else
+        "$ACME_SH" --install-cert -d "$domain" --cert-file "$cert_path" --key-file "$key_path" --force &>/dev/null || true
+      fi
+      install_ok=true
+    fi
+  fi
+
+  if [[ "$install_ok" != "true" ]]; then
+    log_i18n "证书安装到目标路径失败" "Failed to install renewed certificate to the target path" "$RED"
+    return 1
+  fi
+
+  if unit_name=$(service_unit_or_warn 2>/dev/null); then
+    systemctl restart "${unit_name}.service" &>/dev/null || true
+  fi
+  log_i18n "证书续期完成，服务已重启" "Certificate renewed and service restarted" "$GREEN"
+  return 0
+}
+
+probe_hysteria_download_url() {
+  local url="$1" result code total
+  result=$(curl -L --connect-timeout 5 --max-time 15 --range 0-0 -o /dev/null -s -w '%{http_code} %{time_total}' "$url" 2>/dev/null || true)
+  code="${result%% *}"
+  total="${result#* }"
+  [[ "$code" == "200" || "$code" == "206" ]] || return 1
+  printf "%s|%s" "$total" "$url"
+}
+
+rank_hysteria_download_urls() {
+  local version="$1" os="$2" arch="$3" asset="hysteria-${os}-${arch}"
+  local candidates=(
+    "https://ghproxy.com/https://github.com/apernet/hysteria/releases/download/${version}/${asset}"
+    "https://mirror.ghproxy.com/https://github.com/apernet/hysteria/releases/download/${version}/${asset}"
+    "https://github.moeyy.xyz/https://github.com/apernet/hysteria/releases/download/${version}/${asset}"
+    "https://github.com/apernet/hysteria/releases/download/${version}/${asset}"
+  )
+  local scored=() probe
+  for probe in "${candidates[@]}"; do
+    if probe=$(probe_hysteria_download_url "$probe"); then
+      scored+=("$probe")
+    fi
+  done
+  if [[ ${#scored[@]} -eq 0 ]]; then
+    printf "%s\n" "https://github.com/apernet/hysteria/releases/download/${version}/${asset}"
+    return 0
+  fi
+  printf "%s\n" "${scored[@]}" | sort -n | cut -d'|' -f2-
+}
+
+download_hysteria_binary_to_path() {
+  local latest_version="$1" os="$2" arch="$3" output_path="$4"
+  local url tmp_path="${output_path}.download.$$"
+
+  while IFS= read -r url; do
+    [[ -z "$url" ]] && continue
+    log_i18n "测速并尝试下载源: $url" "Testing and trying download source: $url" "$BLUE"
+    rm -f "$tmp_path"
+    if command -v curl >/dev/null 2>&1; then
+      curl -fL --connect-timeout 10 --retry 3 --retry-delay 2 -o "$tmp_path" "$url" || {
+        log_i18n "当前镜像下载失败，尝试下一个候选源" "Current mirror failed, trying the next candidate" "$YELLOW"
+        continue
+      }
+    else
+      wget "$url" -O "$tmp_path" || {
+        log_i18n "当前镜像下载失败，尝试下一个候选源" "Current mirror failed, trying the next candidate" "$YELLOW"
+        continue
+      }
+    fi
+
+    chmod +x "$tmp_path"
+    if timeout 5s "$tmp_path" version &>/dev/null; then
+      mv -f "$tmp_path" "$output_path"
+      chmod +x "$output_path"
+      return 0
+    fi
+
+    log_i18n "下载内容校验失败，继续尝试其他镜像" "Downloaded binary validation failed, trying other mirrors" "$YELLOW"
+  done < <(rank_hysteria_download_urls "$latest_version" "$os" "$arch")
+
+  rm -f "$tmp_path"
+  return 1
+}
+
+upgrade_hysteria() {
+  local unit latest_version current_version os arch backup_path tmp_path service_bin="/usr/local/bin/hysteria"
+
+  unit=$(service_unit_or_warn) || return 1
+  current_version=$("$service_bin" version 2>/dev/null | grep -ioE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -n 1 || true)
+  latest_version=$(curl -fsSL --connect-timeout 10 https://api.github.com/repos/apernet/hysteria/releases/latest | jq -r '.tag_name // empty' 2>/dev/null || true)
+  if [[ -z "$latest_version" ]]; then
+    log_i18n "无法获取 GitHub 最新版本信息" "Failed to fetch the latest version from GitHub" "$RED"
+    return 1
+  fi
+
+  log_i18n "当前版本: ${current_version:-未知}，最新版本: $latest_version" "Current version: ${current_version:-unknown}, latest version: $latest_version" "$BLUE"
+  if [[ -n "$current_version" && "$current_version" == "$latest_version" ]]; then
+    log_i18n "当前已经是最新版本，无需升级" "Already on the latest version, no upgrade needed" "$GREEN"
+    return 0
+  fi
+
+  os=$(uname -s | tr '[:upper:]' '[:lower:]')
+  arch=$(uname -m)
+  case "$arch" in
+    x86_64|amd64) arch="amd64" ;;
+    aarch64|arm64) arch="arm64" ;;
+    armv7l) arch="arm" ;;
+    i386|i686) arch="386" ;;
+    *)
+      log_i18n "不支持的系统架构: $arch" "Unsupported architecture: $arch" "$RED"
+      return 1
+      ;;
+  esac
+
+  tmp_path="/tmp/hysteria_new_core.$$"
+  backup_path="${service_bin}.bak.$(date +%Y%m%d%H%M%S)"
+
+  if ! download_hysteria_binary_to_path "$latest_version" "$os" "$arch" "$tmp_path"; then
+    log_i18n "热升级下载失败" "Hot upgrade download failed" "$RED"
+    rm -f "$tmp_path"
+    return 1
+  fi
+
+  if ! systemctl stop "${unit}.service"; then
+    log_i18n "停止服务失败，已中止升级" "Failed to stop the service, aborting upgrade" "$RED"
+    rm -f "$tmp_path"
+    return 1
+  fi
+
+  cp -f "$service_bin" "$backup_path" || {
+    log_i18n "备份当前核心失败，已恢复服务" "Failed to back up current binary, service restored" "$RED"
+    systemctl start "${unit}.service" &>/dev/null || true
+    rm -f "$tmp_path"
+    return 1
+  }
+
+  if mv -f "$tmp_path" "$service_bin" && chmod +x "$service_bin" && systemctl daemon-reload && systemctl start "${unit}.service"; then
+    rm -f "$backup_path"
+    log_i18n "热升级完成，服务已恢复" "Hot upgrade complete and service is back up" "$GREEN"
+    return 0
+  fi
+
+  log_i18n "升级失败，正在回滚到旧版本" "Upgrade failed, rolling back to the previous version" "$YELLOW"
+  mv -f "$backup_path" "$service_bin" 2>/dev/null
+  chmod +x "$service_bin" 2>/dev/null
+  systemctl daemon-reload
+  systemctl start "${unit}.service" &>/dev/null || true
+  rm -f "$tmp_path"
+  return 1
+}
+
+# Resolve the actual installed service name when distros differ on unit naming.
+resolve_service_name() {
+  local svc
+  for svc in "${HYSTERIA_SERVICES[@]}"; do
+    if systemctl list-unit-files "${svc}.service" --no-legend 2>/dev/null | grep -q "${svc}.service" ||
+       systemctl list-units --all "${svc}.service" --no-legend 2>/dev/null | grep -q "${svc}.service"; then
+      printf "%s" "$svc"
+      return 0
+    fi
+  done
+  return 1
+}
+
+service_unit_or_warn() {
+  local unit
+  unit=$(resolve_service_name) || {
+    log "Warning: Unable to locate installed Hysteria service unit / 警告：未找到已安装的 Hysteria 服务单元" "$YELLOW"
+    return 1
+  }
+  printf "%s" "$unit"
+}
+
+dump_service_diagnostics() {
+  local unit
+  unit=$(service_unit_or_warn) || return 1
+  log "Hysteria service status / Hysteria 服务状态:" "$YELLOW"
+  systemctl status "${unit}.service" --no-pager -l 2>&1 | tee -a "$LOG_FILE" || true
+  log "Recent Hysteria service logs / 最近的 Hysteria 服务日志:" "$YELLOW"
+  journalctl -u "${unit}.service" -n 80 --no-pager 2>&1 | tee -a "$LOG_FILE" || true
+  [[ -f "$CONFIG_FILE" ]] && log "Config file: $CONFIG_FILE / 配置文件: $CONFIG_FILE" "$YELLOW"
 }
 
 # 验证代理地址格式
@@ -637,14 +949,6 @@ validate_proxy_addr() {
   fi
   [[ "$host" =~ ^([A-Za-z0-9-]+\.)*[A-Za-z0-9-]+$ ]] && return 0
   return 1
-}
-
-dump_service_diagnostics() {
-  log "Hysteria service status / Hysteria 服务状态:" "$YELLOW"
-  systemctl status "$SERVICE_NAME" --no-pager -l 2>&1 | tee -a "$LOG_FILE" || true
-  log "Recent Hysteria service logs / 最近的 Hysteria 服务日志:" "$YELLOW"
-  journalctl -u "$SERVICE_NAME" -n 80 --no-pager 2>&1 | tee -a "$LOG_FILE" || true
-  [[ -f "$CONFIG_FILE" ]] && log "Config file: $CONFIG_FILE / 配置文件: $CONFIG_FILE" "$YELLOW"
 }
 
 # Overrides the earlier implementation so failed starts show the real cause.
@@ -670,9 +974,11 @@ EOF
 # Overrides the earlier implementation so a quick crash prints status and logs.
 check_health() {
   local domain="$1" main_port="$2"
+  local unit
   log "$(get_msg check_health)" "$BLUE"
   sleep 2
-  if ! systemctl is-active --quiet "$SERVICE_NAME"; then
+  unit=$(service_unit_or_warn) || return 1
+  if ! systemctl is-active --quiet "${unit}.service"; then
     log "Error: Service not running! / 错误：服务未运行！" "$RED"
     dump_service_diagnostics
     return 1
@@ -689,26 +995,34 @@ check_health() {
 }
 
 view_service_status() {
+  local unit
+  unit=$(service_unit_or_warn) || return 1
   log "$(get_msg service_status)" "$BLUE"
-  systemctl status "$SERVICE_NAME" --no-pager
+  systemctl status "${unit}.service" --no-pager
 }
 
 # 查看最近 30 条日志
 view_service_logs() {
+  local unit
+  unit=$(service_unit_or_warn) || return 1
   log "$(get_msg service_logs)" "$BLUE"
-  journalctl -u "$SERVICE_NAME" -n 30 --no-pager
+  journalctl -u "${unit}.service" -n 30 --no-pager
 }
 
 # 重启服务
 restart_service() {
+  local unit
+  unit=$(service_unit_or_warn) || return 1
   log "$(get_msg service_restart)" "$BLUE"
-  systemctl restart "$SERVICE_NAME" && log "Service restarted successfully / 服务重启成功" "$GREEN" || log "Error: Failed to restart service! / 错误：重启服务失败！" "$RED"
+  systemctl restart "${unit}.service" && log "Service restarted successfully / 服务重启成功" "$GREEN" || log "Error: Failed to restart service! / 错误：重启服务失败！" "$RED"
 }
 
 # 停止服务
 stop_service() {
+  local unit
+  unit=$(service_unit_or_warn) || return 1
   log "$(get_msg service_stop)" "$BLUE"
-  systemctl stop "$SERVICE_NAME" && log "Service stopped successfully / 服务停止成功" "$GREEN" || log "Error: Failed to stop service! / 错误：停止服务失败！" "$RED"
+  systemctl stop "${unit}.service" && log "Service stopped successfully / 服务停止成功" "$GREEN" || log "Error: Failed to stop service! / 错误：停止服务失败！" "$RED"
 }
 
 # 显示配置信息
@@ -733,8 +1047,11 @@ manage_service() {
       3) restart_service ;;
       4) stop_service ;;
       5) show_config_info ;;
+      6) show_certificate_expiry ;;
+      7) renew_certificate_now ;;
+      8) upgrade_hysteria ;;
       0) return 0 ;;
-      *) log_i18n "无效选项，请选择 0-5" "Invalid option, please choose 0-5" "$YELLOW" ;;
+      *) log_i18n "无效选项，请选择 0-8" "Invalid option, please choose 0-8" "$YELLOW" ;;
     esac
     read -p "$(get_msg continue_prompt)" cont
   done
@@ -944,7 +1261,7 @@ issue_certificate() {
         systemctl stop apache2 &>/dev/null || true
       fi
       iptables -A INPUT -p tcp --dport 80 -j ACCEPT &>/dev/null
-      "$ACME_SH" --issue -d "$domain" --standalone -m "$email" || { log "Error: Failed to issue certificate via Standalone! / 错误：通过 Standalone 申请证书失败！" "$RED"; exit 1; }
+      "$ACME_SH" --issue -d "$domain" --standalone -m "$email" --days 15 || { log "Error: Failed to issue certificate via Standalone! / 错误：通过 Standalone 申请证书失败！" "$RED"; exit 1; }
       iptables -D INPUT -p tcp --dport 80 -j ACCEPT &>/dev/null
       ;;
     2)
@@ -959,7 +1276,7 @@ issue_certificate() {
         log_i18n "错误：Cloudflare API Token 不能为空且不能包含空白" "Error: Cloudflare API Token cannot be empty or contain whitespace" "$RED"
       done
       export CF_Email="$cf_email" CF_Token="$cf_token"
-      "$ACME_SH" --issue --dns dns_cf -d "$domain" -m "$email" || { log "Error: Failed to issue certificate via Cloudflare token! / 错误：通过 Cloudflare Token 申请证书失败！" "$RED"; unset CF_Email CF_Token; exit 1; }
+      "$ACME_SH" --issue --dns dns_cf -d "$domain" -m "$email" --days 15 || { log "Error: Failed to issue certificate via Cloudflare token! / 错误：通过 Cloudflare Token 申请证书失败！" "$RED"; unset CF_Email CF_Token; exit 1; }
       unset CF_Email CF_Token
       ;;
     3)
@@ -974,7 +1291,7 @@ issue_certificate() {
         log_i18n "错误：阿里云 AccessKey Secret 不能为空且不能包含空白" "Error: Aliyun AccessKey Secret cannot be empty or contain whitespace" "$RED"
       done
       export Ali_Key="$ali_key" Ali_Secret="$ali_secret"
-      "$ACME_SH" --issue --dns dns_ali -d "$domain" -m "$email" || { log "Error: Failed to issue certificate via Aliyun! / 错误：通过 Aliyun 申请证书失败！" "$RED"; unset Ali_Key Ali_Secret; exit 1; }
+      "$ACME_SH" --issue --dns dns_ali -d "$domain" -m "$email" --days 15 || { log "Error: Failed to issue certificate via Aliyun! / 错误：通过 Aliyun 申请证书失败！" "$RED"; unset Ali_Key Ali_Secret; exit 1; }
       unset Ali_Key Ali_Secret
       ;;
     *)
@@ -985,6 +1302,7 @@ issue_certificate() {
 
   mkdir -p "$CERT_DIR/$domain"
   "$ACME_SH" --install-cert -d "$domain" --ecc --cert-file "$cert_path" --key-file "$key_path" --force || { log "Error: Failed to install certificate! / 错误：安装证书失败！" "$RED"; exit 1; }
+  ensure_acme_renewal_job
 }
 
 create_config() {
